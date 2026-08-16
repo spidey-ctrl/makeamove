@@ -77,6 +77,39 @@ describe('projects and moves through the storage integration seam', () => {
     expect(titles).toEqual(['Open one'])
   })
 
+  it('completed moves stay excluded from the engine in both models after reload', () => {
+    let state = loadState()
+    state = createProject(state, 'College')
+    const projectId = state.projects[0].id
+    state = createMove(state, projectId, { title: 'Done one', deadline: '2026-08-20' })
+    state = setMoveCompleted(state, state.moves[0].id, true)
+    state = createMove(state, projectId, { title: 'Open one', deadline: '2026-08-30' })
+    saveState(state)
+
+    const reloaded = loadState()
+    const projectMoves = reloaded.moves.filter((m) => m.projectId === projectId)
+    expect(
+      sortActiveMoves(projectMoves, 'low-hanging-fruit').map((m) => m.title),
+    ).toEqual(['Open one'])
+    expect(
+      sortActiveMoves(projectMoves, 'high-hanging-fruit').map((m) => m.title),
+    ).toEqual(['Open one'])
+  })
+
+  it('still refuses unticking a move hydrated at 100% progress', () => {
+    let state = loadState()
+    state = createProject(state, 'College')
+    const projectId = state.projects[0].id
+    state = createMove(state, projectId, { title: 'Full', deadline: '2026-08-20' })
+    state = updateMove(state, state.moves[0].id, { progress: 100 })
+    saveState(state)
+
+    const reloaded = loadState()
+    const moveId = reloaded.moves[0].id
+    const refused = setMoveCompleted(reloaded, moveId, false)
+    expect(refused.moves[0].completed).toBe(true)
+  })
+
   it('migrates pre-v2 stored data on load through the storage boundary', () => {
     window.localStorage.setItem(
       STORAGE_KEY,
