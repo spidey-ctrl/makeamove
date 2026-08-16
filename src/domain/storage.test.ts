@@ -251,4 +251,68 @@ describe('projects and moves through the storage integration seam', () => {
     expect(stillInHistory.length).toBeGreaterThan(0)
     expect(stillInHistory[0].moves.map((m) => m.id)).toContain(move.id)
   })
+
+  it('re-completing a reopened move keeps its original completion record (ADR 0002)', () => {
+    let state = loadState()
+    state = createProject(state, 'College')
+    const projectId = state.projects[0].id
+    state = createMove(state, projectId, { title: 'Redo', deadline: '2026-08-30' })
+    state = setMoveCompleted(state, state.moves[0].id, true)
+    const firstDate = state.moves[0].completedAt
+    state = reopenMove(state, state.moves[0].id)
+    saveState(state)
+
+    const reopened = loadState()
+    const reCompleted = setMoveCompleted(reopened, reopened.moves[0].id, true)
+    saveState(reCompleted)
+
+    const after = loadState()
+    expect(after.moves[0].completed).toBe(true)
+    expect(after.moves[0].completedAt).toBe(firstDate)
+  })
+
+  it('a reopened move that is still overdue reappears in the rollover prompt after reload', () => {
+    let state = loadState()
+    state = createProject(state, 'College')
+    const projectId = state.projects[0].id
+    state = createMove(state, projectId, { title: 'Round two', deadline: '2026-08-01' })
+    state = setMoveCompleted(state, state.moves[0].id, true)
+    saveState(state)
+
+    const reloaded = loadState()
+    expect(findOverdueMoves(reloaded.moves, '2026-08-16')).toHaveLength(0)
+    const reopened = reopenMove(reloaded, reloaded.moves[0].id)
+    saveState(reopened)
+
+    const after = loadState()
+    const prompts = findOverdueMoves(after.moves, '2026-08-16')
+    expect(prompts.map((m) => m.title)).toEqual(['Round two'])
+  })
+
+  it('a reopened move returns to the strategy engine ordering after reload', () => {
+    let state = loadState()
+    state = createProject(state, 'College')
+    const projectId = state.projects[0].id
+    state = createMove(state, projectId, { title: 'Back in the list', deadline: '2026-08-10' })
+    state = setMoveCompleted(state, state.moves[0].id, true)
+    saveState(state)
+
+    const reloaded = loadState()
+    expect(
+      sortActiveMoves(
+        reloaded.moves.filter((m) => m.projectId === projectId),
+        'low-hanging-fruit',
+      ),
+    ).toHaveLength(0)
+
+    const reopened = reopenMove(reloaded, reloaded.moves[0].id)
+    saveState(reopened)
+
+    const after = loadState()
+    const ordered = sortActiveMoves(
+      after.moves.filter((m) => m.projectId === projectId),
+      'low-hanging-fruit',
+    )
+    expect(ordered.map((m) => m.title)).toEqual(['Back in the list'])
+  })
 })
