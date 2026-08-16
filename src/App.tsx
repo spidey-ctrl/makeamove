@@ -1,10 +1,19 @@
 import { useEffect, useRef, useState } from 'react'
-import { createProject, deleteProject, renameProject } from './domain/store'
+import {
+  createProject,
+  createMove,
+  deleteMove,
+  deleteProject,
+  renameProject,
+  updateMove,
+  type MovePatch,
+} from './domain/store'
 import { loadState, saveState } from './domain/storage'
-import type { AppState } from './domain/persistence'
+import type { AppState, Move } from './domain/persistence'
 
 function App() {
   const [state, setState] = useState<AppState>(loadState)
+  const [projectId, setProjectId] = useState<string | null>(null)
 
   const latest = useRef(state)
   latest.current = state
@@ -32,6 +41,22 @@ function App() {
 
   function apply(mutate: (s: AppState) => AppState) {
     setState((s) => mutate(s))
+  }
+
+  const project = projectId
+    ? state.projects.find((p) => p.id === projectId) ?? null
+    : null
+
+  if (project) {
+    return (
+      <ProjectView
+        projectId={project.id}
+        projectName={project.name}
+        moves={state.moves.filter((m) => m.projectId === project.id)}
+        apply={apply}
+        onBack={() => setProjectId(null)}
+      />
+    )
   }
 
   return (
@@ -63,9 +88,9 @@ function App() {
         <p>No projects yet. Create your first project above.</p>
       ) : (
         <ul style={{ listStyle: 'none', padding: 0, margin: 0 }}>
-          {state.projects.map((project) => (
+          {state.projects.map((p) => (
             <li
-              key={project.id}
+              key={p.id}
               style={{
                 display: 'flex',
                 alignItems: 'center',
@@ -74,16 +99,29 @@ function App() {
                 borderBottom: '1px solid var(--border)',
               }}
             >
-              <span style={{ flex: 1, color: 'var(--text-h)' }}>
-                {project.name}
-              </span>
+              <button
+                type="button"
+                style={{
+                  flex: 1,
+                  textAlign: 'left',
+                  background: 'none',
+                  border: 'none',
+                  padding: 0,
+                  color: 'var(--text-h)',
+                }}
+                onClick={() => {
+                  setProjectId(p.id)
+                }}
+              >
+                {p.name}
+              </button>
               <RenameButton
-                initial={project.name}
-                onRename={(name) => apply((s) => renameProject(s, project.id, name))}
+                initial={p.name}
+                onRename={(name) => apply((s) => renameProject(s, p.id, name))}
               />
               <button
                 type="button"
-                onClick={() => apply((s) => deleteProject(s, project.id))}
+                onClick={() => apply((s) => deleteProject(s, p.id))}
               >
                 Delete
               </button>
@@ -97,6 +135,224 @@ function App() {
         locally
       </p>
     </main>
+  )
+}
+
+function ProjectView({
+  projectId,
+  projectName,
+  moves,
+  apply,
+  onBack,
+}: {
+  projectId: string
+  projectName: string
+  moves: Move[]
+  apply: (mutate: (s: AppState) => AppState) => void
+  onBack: () => void
+}) {
+  const [showForm, setShowForm] = useState(false)
+
+  return (
+    <main style={{ maxWidth: 640, margin: '0 auto', padding: '2rem 1rem' }}>
+      <button type="button" onClick={onBack}>
+        ← All projects
+      </button>
+      <h1>{projectName}</h1>
+
+      {moves.length === 0 ? (
+        <div
+          style={{
+            border: '1px solid var(--border)',
+            borderRadius: 8,
+            padding: 24,
+            textAlign: 'center',
+            marginBottom: 16,
+            background: 'var(--accent-bg)',
+          }}
+        >
+          <p style={{ color: 'var(--text-h)', marginBottom: 8 }}>
+            This project has no moves.
+          </p>
+          <button type="button" onClick={() => setShowForm(true)}>
+            Add your first move
+          </button>
+        </div>
+      ) : (
+        <>
+          <button type="button" onClick={() => setShowForm(true)} style={{ marginBottom: 16 }}>
+            Add a move
+          </button>
+          <ul style={{ listStyle: 'none', padding: 0, margin: 0 }}>
+            {moves.map((move) => (
+              <MoveRow key={move.id} move={move} apply={apply} />
+            ))}
+          </ul>
+        </>
+      )}
+
+      {showForm && (
+        <MoveForm
+          onAdd={(input) => {
+            apply((s) => createMove(s, projectId, input))
+            setShowForm(false)
+          }}
+          onCancel={() => setShowForm(false)}
+        />
+      )}
+    </main>
+  )
+}
+
+function MoveRow({
+  move,
+  apply,
+}: {
+  move: Move
+  apply: (mutate: (s: AppState) => AppState) => void
+}) {
+  const [editing, setEditing] = useState(false)
+
+  if (editing) {
+    return (
+      <li
+        style={{
+          padding: '12px 0',
+          borderBottom: '1px solid var(--border)',
+          color: 'var(--text-h)',
+        }}
+      >
+        <MoveForm
+          initial={move}
+          onAdd={(patch) => {
+            apply((s) => updateMove(s, move.id, patch))
+            setEditing(false)
+          }}
+          onCancel={() => setEditing(false)}
+        />
+      </li>
+    )
+  }
+
+  return (
+    <li
+      style={{
+        display: 'flex',
+        alignItems: 'center',
+        gap: 12,
+        padding: '12px 0',
+        borderBottom: '1px solid var(--border)',
+      }}
+    >
+      <div style={{ flex: 1 }}>
+        <div style={{ color: 'var(--text-h)' }}>{move.title}</div>
+        <div style={{ fontSize: 13, color: 'var(--text)', opacity: 0.8 }}>
+          Difficulty {move.difficulty}/5 · {move.progress}% · due {move.deadline}
+        </div>
+      </div>
+      <button type="button" onClick={() => setEditing(true)}>
+        Edit
+      </button>
+      <button type="button" onClick={() => apply((s) => deleteMove(s, move.id))}>
+        Delete
+      </button>
+    </li>
+  )
+}
+
+function MoveForm({
+  initial,
+  onAdd,
+  onCancel,
+}: {
+  initial?: Move
+  onAdd: (patch: MovePatch & { title: string; deadline: string }) => void
+  onCancel: () => void
+}) {
+  const [title, setTitle] = useState(initial?.title ?? '')
+  const [difficulty, setDifficulty] = useState(initial?.difficulty ?? 3)
+  const [progress, setProgress] = useState(initial?.progress ?? 0)
+  const [deadline, setDeadline] = useState(initial?.deadline ?? '')
+
+  const valid = title.trim() !== '' && deadline !== ''
+
+  return (
+    <form
+      style={{
+        border: '1px solid var(--border)',
+        borderRadius: 8,
+        padding: 16,
+        marginBottom: 16,
+        display: 'grid',
+        gap: 12,
+      }}
+      onSubmit={(e) => {
+        e.preventDefault()
+        if (!valid) return
+        onAdd({ title: title.trim(), difficulty, progress, deadline })
+      }}
+    >
+      <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
+        <label style={{ flex: 1 }}>
+          Title
+          <input
+            type="text"
+            value={title}
+            onChange={(e) => setTitle(e.target.value)}
+            placeholder="What needs to happen?"
+            aria-label="Move title"
+            style={{ display: 'block', width: '100%', padding: '6px 8px' }}
+          />
+        </label>
+        <label>
+          Deadline
+          <input
+            type="date"
+            value={deadline}
+            onChange={(e) => setDeadline(e.target.value)}
+            aria-label="Move deadline"
+            style={{ display: 'block', padding: '6px 8px' }}
+          />
+        </label>
+      </div>
+
+      <label>
+        Difficulty: {difficulty}/5
+        <input
+          type="range"
+          min={1}
+          max={5}
+          step={1}
+          value={difficulty}
+          onChange={(e) => setDifficulty(Number(e.target.value))}
+          aria-label="Move difficulty"
+          style={{ display: 'block', width: '100%' }}
+        />
+      </label>
+
+      <label>
+        Progress: {progress}%
+        <input
+          type="range"
+          min={0}
+          max={100}
+          step={1}
+          value={progress}
+          onChange={(e) => setProgress(Number(e.target.value))}
+          aria-label="Move progress"
+          style={{ display: 'block', width: '100%' }}
+        />
+      </label>
+
+      <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+        <button type="button" onClick={onCancel}>
+          Cancel
+        </button>
+        <button type="submit" disabled={!valid}>
+          {initial ? 'Save' : 'Add move'}
+        </button>
+      </div>
+    </form>
   )
 }
 

@@ -1,4 +1,4 @@
-import type { AppState, Project } from './persistence'
+import type { AppState, Move, Project } from './persistence'
 
 export function createProject(state: AppState, name: string): AppState {
   const project: Project = {
@@ -22,4 +22,54 @@ export function deleteProject(state: AppState, id: string): AppState {
     projects: state.projects.filter((p) => p.id !== id),
     moves: state.moves.filter((m) => m.projectId !== id),
   }
+}
+
+export type NewMove = {
+  title: string
+  deadline: string
+}
+
+export function createMove(state: AppState, projectId: string, input: NewMove): AppState {
+  const move: Move = {
+    id: crypto.randomUUID(),
+    projectId,
+    title: input.title,
+    difficulty: 3,
+    progress: 0,
+    deadline: input.deadline,
+    completed: false,
+    completedAt: null,
+  }
+  return { ...state, moves: [...state.moves, move] }
+}
+
+export type MovePatch = Partial<
+  Pick<Move, 'title' | 'difficulty' | 'progress' | 'deadline'>
+>
+
+export function updateMove(state: AppState, id: string, patch: MovePatch): AppState {
+  return {
+    ...state,
+    moves: state.moves.map((m) => {
+      if (m.id !== id) return m
+      return {
+        ...m,
+        difficulty: clamp(patch.difficulty ?? m.difficulty, 1, 5),
+        progress: clamp(patch.progress ?? m.progress, 0, 100),
+        title: patch.title ?? m.title,
+        deadline: patch.deadline ?? m.deadline,
+      }
+    }),
+  }
+}
+
+export function deleteMove(state: AppState, id: string): AppState {
+  return {
+    ...state,
+    moves: state.moves.filter((m) => m.id !== id),
+  }
+}
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, value))
 }

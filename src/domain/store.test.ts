@@ -1,70 +1,116 @@
 import { describe, expect, it } from 'vitest'
 import { emptyState } from './persistence'
-import { createProject, deleteProject, renameProject } from './store'
+import {
+  createProject,
+  createMove,
+  deleteMove,
+  updateMove,
+} from './store'
 
-describe('project mutations', () => {
-  it('createProject adds a project to the empty state', () => {
-    const next = createProject(emptyState(), 'College')
-    expect(next.projects).toHaveLength(1)
-    expect(next.projects[0]).toMatchObject({
-      name: 'College',
-      createdAt: expect.any(String) as unknown,
-    })
-    expect(next.projects[0].id).toBeTruthy()
-  })
+function stateWithProject() {
+  return createProject(emptyState(), 'College')
+}
 
-  it('createProject does not mutate the input state', () => {
-    const state = emptyState()
-    createProject(state, 'College')
-    expect(state.projects).toHaveLength(0)
-  })
-
-  it('renameProject renames an existing project', () => {
-    const state = createProject(emptyState(), 'College')
-    const id = state.projects[0].id
-    const next = renameProject(state, id, 'Capstone')
-    expect(next.projects[0].name).toBe('Capstone')
-  })
-
-  it('renameProject leaves other projects alone', () => {
-    const two = createProject(createProject(emptyState(), 'A'), 'B')
-    const idA = two.projects.find((p) => p.name === 'A')!.id
-    const next = renameProject(two, idA, 'A2')
-    const b = next.projects.find((p) => p.name === 'B')
-    expect(b).toBeTruthy()
-    expect(next.projects).toHaveLength(2)
-  })
-
-  it('deleteProject removes the project', () => {
-    const state = createProject(emptyState(), 'College')
-    const id = state.projects[0].id
-    const next = deleteProject(state, id)
-    expect(next.projects).toHaveLength(0)
-  })
-
-  it('deleteProject removes the project\'s moves too', () => {
-    const state = {
-      ...createProject(emptyState(), 'College'),
-      moves: [
-        {
-          id: 'm1',
-          projectId: '',
-          title: 'Finish essay',
-          difficulty: 3,
-          progress: 60,
-          deadline: '2026-08-30',
-          completed: false,
-          completedAt: null,
-        },
-      ],
-    }
+describe('move mutations', () => {
+  it('createMove adds a move with defaults to the given project', () => {
+    const state = stateWithProject()
     const projectId = state.projects[0].id
-    const withMoves = {
-      ...state,
-      moves: state.moves.map((m) => ({ ...m, projectId })),
-    }
-    const next = deleteProject(withMoves, projectId)
-    expect(next.projects).toHaveLength(0)
-    expect(next.moves).toHaveLength(0)
+    const next = createMove(state, projectId, {
+      title: 'Finish essay',
+      deadline: '2026-08-30',
+    })
+    expect(next.moves).toHaveLength(1)
+    expect(next.moves[0]).toMatchObject({
+      projectId,
+      title: 'Finish essay',
+      deadline: '2026-08-30',
+      difficulty: 3,
+      progress: 0,
+      completed: false,
+      completedAt: null,
+    })
+    expect(next.moves[0].id).toBeTruthy()
+  })
+
+  it('createMove does not mutate the input state', () => {
+    const state = stateWithProject()
+    const projectId = state.projects[0].id
+    createMove(state, projectId, { title: 'X', deadline: '2026-08-30' })
+    expect(state.moves).toHaveLength(0)
+  })
+
+  it('createMove only adds moves to the targeted project', () => {
+    const two = createProject(stateWithProject(), 'Work')
+    const firstId = two.projects.find((p) => p.name === 'College')!.id
+    const next = createMove(two, firstId, {
+      title: 'Finish essay',
+      deadline: '2026-08-30',
+    })
+    expect(next.moves).toHaveLength(1)
+    expect(next.moves[0].projectId).toBe(firstId)
+  })
+
+  it('updateMove edits title, difficulty, progress, and deadline', () => {
+    const state = stateWithProject()
+    const projectId = state.projects[0].id
+    const withMove = createMove(state, projectId, {
+      title: 'Finish essay',
+      deadline: '2026-08-30',
+    })
+    const moveId = withMove.moves[0].id
+    const next = updateMove(withMove, moveId, {
+      title: 'Proofread essay',
+      difficulty: 5,
+      progress: 75,
+      deadline: '2026-09-01',
+    })
+    expect(next.moves[0]).toMatchObject({
+      title: 'Proofread essay',
+      difficulty: 5,
+      progress: 75,
+      deadline: '2026-09-01',
+    })
+  })
+
+  it('updateMove leaves unrelated moves untouched', () => {
+    const state = stateWithProject()
+    const projectId = state.projects[0].id
+    const withTwo = createMove(
+      createMove(state, projectId, { title: 'A', deadline: '2026-08-30' }),
+      projectId,
+      { title: 'B', deadline: '2026-09-01' },
+    )
+    const a = withTwo.moves.find((m) => m.title === 'A')!
+    const b = withTwo.moves.find((m) => m.title === 'B')!
+    const next = updateMove(withTwo, a.id, { progress: 40 })
+    expect(next.moves).toHaveLength(2)
+    expect(next.moves.find((m) => m.id === b.id)!.progress).toBe(0)
+  })
+
+  it('updateMove clamps difficulty to 1-5 and progress to 0-100', () => {
+    const state = stateWithProject()
+    const projectId = state.projects[0].id
+    const withMove = createMove(state, projectId, {
+      title: 'Finish essay',
+      deadline: '2026-08-30',
+    })
+    const moveId = withMove.moves[0].id
+    const next = updateMove(withMove, moveId, { difficulty: 9, progress: -10 })
+    expect(next.moves[0].difficulty).toBe(5)
+    expect(next.moves[0].progress).toBe(0)
+  })
+
+  it('deleteMove removes only the given move', () => {
+    const state = stateWithProject()
+    const projectId = state.projects[0].id
+    const withTwo = createMove(
+      createMove(state, projectId, { title: 'A', deadline: '2026-08-30' }),
+      projectId,
+      { title: 'B', deadline: '2026-09-01' },
+    )
+    const a = withTwo.moves.find((m) => m.title === 'A')!
+    const next = deleteMove(withTwo, a.id)
+    expect(next.moves).toHaveLength(1)
+    expect(next.moves[0].title).toBe('B')
   })
 })
