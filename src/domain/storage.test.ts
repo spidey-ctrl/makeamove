@@ -184,4 +184,44 @@ describe('projects and moves through the storage integration seam', () => {
     expect(late.deadline).toBe('2026-08-23')
     expect(findOverdueMoves(afterRoll.moves, '2026-08-16')).toHaveLength(0)
   })
+
+  it('a completed move with a past deadline never triggers the rollover prompt after reload', () => {
+    let state = loadState()
+    state = createProject(state, 'College')
+    const projectId = state.projects[0].id
+    state = createMove(state, projectId, { title: 'Done, was late', deadline: '2026-08-01' })
+    state = setMoveCompleted(state, state.moves[0].id, true)
+    saveState(state)
+
+    const reloaded = loadState()
+    expect(findOverdueMoves(reloaded.moves, '2026-08-16')).toHaveLength(0)
+  })
+
+  it('rolling a deadline reshuffles the strategy engine order after reload', () => {
+    let state = loadState()
+    state = createProject(state, 'College')
+    const projectId = state.projects[0].id
+    state = createMove(state, projectId, { title: 'Was urgent', deadline: '2026-08-01' })
+    state = createMove(state, projectId, { title: 'Due soon', deadline: '2026-08-20' })
+    const urgentId = state.moves.find((m) => m.title === 'Was urgent')!.id
+    saveState(state)
+
+    expect(
+      sortActiveMoves(
+        state.moves.filter((m) => m.projectId === projectId),
+        'low-hanging-fruit',
+      ).map((m) => m.title),
+    ).toEqual(['Was urgent', 'Due soon'])
+
+    const rolled = setMoveDeadline(loadState(), urgentId, addDays('2026-08-16', 7))
+    saveState(rolled)
+
+    const afterRoll = loadState()
+    expect(
+      sortActiveMoves(
+        afterRoll.moves.filter((m) => m.projectId === projectId),
+        'low-hanging-fruit',
+      ).map((m) => m.title),
+    ).toEqual(['Due soon', 'Was urgent'])
+  })
 })
