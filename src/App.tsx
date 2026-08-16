@@ -6,17 +6,21 @@ import {
   deleteProject,
   renameProject,
   setMoveCompleted,
+  setMoveDeadline,
   setProjectModel,
   updateMove,
   type MovePatch,
 } from './domain/store'
 import { loadState, saveState } from './domain/storage'
 import { sortActiveMoves } from './domain/strategy'
+import { findOverdueMoves } from './domain/rollover'
+import { addDays, todayString } from './domain/dates'
 import type { AppState, ExecutionModel, Move } from './domain/persistence'
 
 function App() {
   const [state, setState] = useState<AppState>(loadState)
   const [projectId, setProjectId] = useState<string | null>(null)
+  const [rolloverDismissedAt, setRolloverDismissedAt] = useState(0)
 
   const latest = useRef(state)
   latest.current = state
@@ -49,96 +53,235 @@ function App() {
   const project = projectId
     ? state.projects.find((p) => p.id === projectId) ?? null
     : null
-
-  if (project) {
-    return (
-      <ProjectView
-        projectId={project.id}
-        projectName={project.name}
-        model={project.model}
-        moves={state.moves.filter((m) => m.projectId === project.id)}
-        apply={apply}
-        onBack={() => setProjectId(null)}
-      />
-    )
-  }
+  const today = todayString()
+  const overdueMoves = findOverdueMoves(state.moves, today)
+  const showRollover = overdueMoves.length > 0 && Date.now() > rolloverDismissedAt
 
   return (
-    <main style={{ maxWidth: 640, margin: '0 auto', padding: '2rem 1rem' }}>
-      <h1>MakeAMove</h1>
-      <form
-        style={{ display: 'flex', gap: 8, marginBottom: 24 }}
-        onSubmit={(e) => {
-          e.preventDefault()
-          const form = e.currentTarget
-          const input = form.elements.namedItem('name') as HTMLInputElement
-          const name = input.value.trim()
-          if (!name) return
-          apply((s) => createProject(s, name))
-          input.value = ''
+    <>
+      {showRollover && (
+        <RolloverPrompt
+          moves={overdueMoves}
+          today={today}
+          apply={apply}
+          onDismiss={() => setRolloverDismissedAt(Date.now())}
+        />
+      )}
+      {project ? (
+        <ProjectView
+          projectId={project.id}
+          projectName={project.name}
+          model={project.model}
+          moves={state.moves.filter((m) => m.projectId === project.id)}
+          apply={apply}
+          onBack={() => setProjectId(null)}
+        />
+      ) : (
+        <main style={{ maxWidth: 640, margin: '0 auto', padding: '2rem 1rem' }}>
+          <h1>MakeAMove</h1>
+          <form
+            style={{ display: 'flex', gap: 8, marginBottom: 24 }}
+            onSubmit={(e) => {
+              e.preventDefault()
+              const form = e.currentTarget
+              const input = form.elements.namedItem('name') as HTMLInputElement
+              const name = input.value.trim()
+              if (!name) return
+              apply((s) => createProject(s, name))
+              input.value = ''
+            }}
+          >
+            <input
+              name="name"
+              type="text"
+              placeholder="New project name"
+              aria-label="Project name"
+              style={{ flex: 1, padding: '4px 8px' }}
+            />
+            <button type="submit">Add project</button>
+          </form>
+
+          {state.projects.length === 0 ? (
+            <p>No projects yet. Create your first project above.</p>
+          ) : (
+            <ul style={{ listStyle: 'none', padding: 0, margin: 0 }}>
+              {state.projects.map((p) => (
+                <li
+                  key={p.id}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 8,
+                    padding: '8px 0',
+                    borderBottom: '1px solid var(--border)',
+                  }}
+                >
+                  <button
+                    type="button"
+                    style={{
+                      flex: 1,
+                      textAlign: 'left',
+                      background: 'none',
+                      border: 'none',
+                      padding: 0,
+                      color: 'var(--text-h)',
+                    }}
+                    onClick={() => {
+                      setProjectId(p.id)
+                    }}
+                  >
+                    {p.name}
+                  </button>
+                  <RenameButton
+                    initial={p.name}
+                    onRename={(name) => apply((s) => renameProject(s, p.id, name))}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => apply((s) => deleteProject(s, p.id))}
+                  >
+                    Delete
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+
+          <p style={{ marginTop: 24, fontSize: 13, color: 'var(--text)' }}>
+            {state.projects.length} project{state.projects.length === 1 ? '' : 's'}; stored
+            locally
+          </p>
+        </main>
+      )}
+    </>
+  )
+}
+
+function RolloverPrompt({
+  moves,
+  today,
+  apply,
+  onDismiss,
+}: {
+  moves: Move[]
+  today: string
+  apply: (mutate: (s: AppState) => AppState) => void
+  onDismiss: () => void
+}) {
+  const [deadlines, setDeadlines] = useState<Record<string, string>>(() =>
+    Object.fromEntries(moves.map((m) => [m.id, addDays(today, 7)])),
+  )
+  const [toasts, setToasts] = useState<string[]>([])
+
+  function confirmAll() {
+    for (const move of moves) {
+      apply((s) => setMoveDeadline(s, move.id, deadlines[move.id]))
+    }
+    setToasts(
+      moves.map(
+        (m) => `✓ "${m.title}" moved to next week (${deadlines[m.id]})`,
+      ),
+    )
+    onDismiss()
+  }
+
+  useEffect(() => {
+    if (toasts.length === 0) return
+    const handle = setTimeout(() => setToasts([]), 4000)
+    return () => clearTimeout(handle)
+  }, [toasts])
+
+  return (
+    <div
+      style={{
+        position: 'fixed',
+        inset: 0,
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        background: 'rgba(0,0,0,0.4)',
+        zIndex: 10,
+      }}
+    >
+      <div
+        style={{
+          maxWidth: 480,
+          width: '90%',
+          background: 'var(--bg)',
+          border: '1px solid var(--border)',
+          borderRadius: 10,
+          padding: 20,
         }}
       >
-        <input
-          name="name"
-          type="text"
-          placeholder="New project name"
-          aria-label="Project name"
-          style={{ flex: 1, padding: '4px 8px' }}
-        />
-        <button type="submit">Add project</button>
-      </form>
-
-      {state.projects.length === 0 ? (
-        <p>No projects yet. Create your first project above.</p>
-      ) : (
-        <ul style={{ listStyle: 'none', padding: 0, margin: 0 }}>
-          {state.projects.map((p) => (
+        <h2 style={{ marginTop: 0 }}>
+          {moves.length} overdue move{moves.length === 1 ? '' : 's'}
+        </h2>
+        <p style={{ fontSize: 14, color: 'var(--text)' }}>
+          Roll them all over to next week, with no guilt.
+        </p>
+        <ul style={{ listStyle: 'none', padding: 0, margin: '12px 0' }}>
+          {moves.map((m) => (
             <li
-              key={p.id}
+              key={m.id}
               style={{
                 display: 'flex',
                 alignItems: 'center',
                 gap: 8,
-                padding: '8px 0',
-                borderBottom: '1px solid var(--border)',
+                padding: '6px 0',
               }}
             >
-              <button
-                type="button"
-                style={{
-                  flex: 1,
-                  textAlign: 'left',
-                  background: 'none',
-                  border: 'none',
-                  padding: 0,
-                  color: 'var(--text-h)',
-                }}
-                onClick={() => {
-                  setProjectId(p.id)
-                }}
-              >
-                {p.name}
-              </button>
-              <RenameButton
-                initial={p.name}
-                onRename={(name) => apply((s) => renameProject(s, p.id, name))}
+              <span style={{ flex: 1 }}>{m.title}</span>
+              <input
+                type="date"
+                aria-label={`New deadline for ${m.title}`}
+                value={deadlines[m.id]}
+                onChange={(e) =>
+                  setDeadlines((d) => ({ ...d, [m.id]: e.target.value }))
+                }
+                style={{ padding: '4px 8px' }}
               />
-              <button
-                type="button"
-                onClick={() => apply((s) => deleteProject(s, p.id))}
-              >
-                Delete
-              </button>
             </li>
           ))}
         </ul>
-      )}
+        <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+          <button type="button" onClick={onDismiss}>
+            Dismiss
+          </button>
+          <button type="button" onClick={confirmAll}>
+            Move all to next week
+          </button>
+        </div>
+      </div>
 
-      <p style={{ marginTop: 24, fontSize: 13, color: 'var(--text)' }}>
-        {state.projects.length} project{state.projects.length === 1 ? '' : 's'}; stored
-        locally
-      </p>
-    </main>
+      <div
+        role="status"
+        style={{
+          position: 'fixed',
+          bottom: 16,
+          left: '50%',
+          transform: 'translateX(-50%)',
+          display: 'flex',
+          flexDirection: 'column',
+          gap: 6,
+          zIndex: 20,
+        }}
+      >
+        {toasts.map((t) => (
+          <div
+            key={t}
+            style={{
+              background: 'var(--text-h)',
+              color: 'var(--bg)',
+              borderRadius: 6,
+              padding: '8px 14px',
+              fontSize: 14,
+            }}
+          >
+            {t}
+          </div>
+        ))}
+      </div>
+    </div>
   )
 }
 

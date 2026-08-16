@@ -105,6 +105,13 @@ export function deleteMove(state: AppState, id: string): AppState {
   }
 }
 
+export function setMoveDeadline(state: AppState, id: string, deadline: string): AppState {
+  return {
+    ...state,
+    moves: state.moves.map((m) => (m.id === id ? { ...m, deadline } : m)),
+  }
+}
+
 function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value))
 }

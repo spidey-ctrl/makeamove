@@ -4,11 +4,14 @@ import {
   createMove,
   createProject,
   setMoveCompleted,
+  setMoveDeadline,
   setProjectModel,
   updateMove,
 } from './store'
 import { loadState, saveState } from './storage'
 import { sortActiveMoves } from './strategy'
+import { findOverdueMoves } from './rollover'
+import { addDays } from './dates'
 
 describe('projects and moves through the storage integration seam', () => {
   beforeEach(() => {
@@ -157,5 +160,28 @@ describe('projects and moves through the storage integration seam', () => {
       'high-hanging-fruit',
     ).map((m) => m.title)
     expect(ids).toEqual(['Hard one', 'Easy one'])
+  })
+
+  it('detects overdue moves on load and a rolled-over deadline survives reload', () => {
+    let state = loadState()
+    state = createProject(state, 'College')
+    const projectId = state.projects[0].id
+    state = createMove(state, projectId, { title: 'Late one', deadline: '2026-08-01' })
+    state = createMove(state, projectId, { title: 'Fine one', deadline: '2026-09-30' })
+    const lateId = state.moves.find((m) => m.title === 'Late one')!.id
+    saveState(state)
+
+    const afterLoad = loadState()
+    expect(
+      findOverdueMoves(afterLoad.moves, '2026-08-16').map((m) => m.title),
+    ).toEqual(['Late one'])
+
+    const rolled = setMoveDeadline(afterLoad, lateId, addDays('2026-08-16', 7))
+    saveState(rolled)
+
+    const afterRoll = loadState()
+    const late = afterRoll.moves.find((m) => m.id === lateId)!
+    expect(late.deadline).toBe('2026-08-23')
+    expect(findOverdueMoves(afterRoll.moves, '2026-08-16')).toHaveLength(0)
   })
 })

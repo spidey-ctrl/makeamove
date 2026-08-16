@@ -4,6 +4,7 @@ import {
   createProject,
   createMove,
   deleteMove,
+  setMoveDeadline,
   setProjectModel,
   updateMove,
 } from './store'
@@ -127,5 +128,19 @@ describe('execution model', () => {
     const id = state.projects[0].id
     const next = setProjectModel(state, id, 'high-hanging-fruit')
     expect(next.projects[0].model).toBe('high-hanging-fruit')
+  })
+})
+
+describe('rollover', () => {
+  it('setMoveDeadline updates a move deadline', () => {
+    const withProject = createProject(emptyState(), 'College')
+    const projectId = withProject.projects[0].id
+    const withMove = createMove(withProject, projectId, {
+      title: 'Finish essay',
+      deadline: '2026-08-30',
+    })
+    const id = withMove.moves[0].id
+    const next = setMoveDeadline(withMove, id, '2026-09-06')
+    expect(next.moves[0].deadline).toBe('2026-09-06')
   })
 })
