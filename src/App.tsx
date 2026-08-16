@@ -5,6 +5,7 @@ import {
   deleteMove,
   deleteProject,
   renameProject,
+  setMoveCompleted,
   setProjectModel,
   updateMove,
   type MovePatch,
@@ -158,6 +159,8 @@ function ProjectView({
 }) {
   const [showForm, setShowForm] = useState(false)
   const ordered = sortActiveMoves(moves, model)
+  const completed = moves.filter((m) => m.completed)
+  const nothingToDo = ordered.length === 0 && completed.length > 0
 
   return (
     <main style={{ maxWidth: 640, margin: '0 auto', padding: '2rem 1rem' }}>
@@ -181,6 +184,7 @@ function ProjectView({
         </select>
       </label>
 
+      <h2 style={{ fontSize: 18, margin: '0 0 8px' }}>Active</h2>
       {ordered.length === 0 ? (
         <div
           style={{
@@ -193,7 +197,9 @@ function ProjectView({
           }}
         >
           <p style={{ color: 'var(--text-h)', marginBottom: 8 }}>
-            This project has no active moves.
+            {nothingToDo
+              ? 'Everything in this project is done.'
+              : 'This project has no moves.'}
           </p>
           <button type="button" onClick={() => setShowForm(true)}>
             Add a move
@@ -206,6 +212,17 @@ function ProjectView({
           </button>
           <ul style={{ listStyle: 'none', padding: 0, margin: 0 }}>
             {ordered.map((move) => (
+              <MoveRow key={move.id} move={move} apply={apply} />
+            ))}
+          </ul>
+        </>
+      )}
+
+      {completed.length > 0 && (
+        <>
+          <h2 style={{ fontSize: 18, margin: '24px 0 8px' }}>Completed</h2>
+          <ul style={{ listStyle: 'none', padding: 0, margin: 0 }}>
+            {completed.map((move) => (
               <MoveRow key={move.id} move={move} apply={apply} />
             ))}
           </ul>
@@ -263,12 +280,28 @@ function MoveRow({
         gap: 12,
         padding: '12px 0',
         borderBottom: '1px solid var(--border)',
+        opacity: move.completed ? 0.55 : 1,
       }}
     >
+      <input
+        type="checkbox"
+        aria-label={`Mark "${move.title}" ${move.completed ? 'not ' : ''}completed`}
+        checked={move.completed}
+        disabled={move.progress >= 100}
+        onChange={(e) => apply((s) => setMoveCompleted(s, move.id, e.target.checked))}
+      />
       <div style={{ flex: 1 }}>
-        <div style={{ color: 'var(--text-h)' }}>{move.title}</div>
+        <div
+          style={{
+            color: 'var(--text-h)',
+            textDecoration: move.completed ? 'line-through' : 'none',
+          }}
+        >
+          {move.title}
+        </div>
         <div style={{ fontSize: 13, color: 'var(--text)', opacity: 0.8 }}>
           Difficulty {move.difficulty}/5 · {move.progress}% · due {move.deadline}
+          {move.completed && move.completedAt ? ` · completed ${move.completedAt}` : ''}
         </div>
       </div>
       <button type="button" onClick={() => setEditing(true)}>

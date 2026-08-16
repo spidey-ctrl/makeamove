@@ -3,6 +3,7 @@ import { SCHEMA_VERSION, STORAGE_KEY } from './persistence'
 import {
   createMove,
   createProject,
+  setMoveCompleted,
   setProjectModel,
   updateMove,
 } from './store'
@@ -53,6 +54,27 @@ describe('projects and moves through the storage integration seam', () => {
       projects: [],
       moves: [],
     })
+  })
+
+  it('persists completion state and excludes completed moves from the engine after reload', () => {
+    let state = loadState()
+    state = createProject(state, 'College')
+    const projectId = state.projects[0].id
+    state = createMove(state, projectId, { title: 'Done one', deadline: '2026-08-20' })
+    state = setMoveCompleted(state, state.moves[0].id, true)
+    state = createMove(state, projectId, { title: 'Open one', deadline: '2026-08-30' })
+    const doneId = state.moves.find((m) => m.title === 'Done one')!.id
+    saveState(state)
+
+    const reloaded = loadState()
+    const done = reloaded.moves.find((m) => m.id === doneId)!
+    expect(done.completed).toBe(true)
+    expect(done.completedAt).toBeTruthy()
+    const titles = sortActiveMoves(
+      reloaded.moves.filter((m) => m.projectId === projectId),
+      'low-hanging-fruit',
+    ).map((m) => m.title)
+    expect(titles).toEqual(['Open one'])
   })
 
   it('migrates pre-v2 stored data on load through the storage boundary', () => {

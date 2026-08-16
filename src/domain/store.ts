@@ -64,12 +64,35 @@ export function updateMove(state: AppState, id: string, patch: MovePatch): AppSt
     ...state,
     moves: state.moves.map((m) => {
       if (m.id !== id) return m
+      const progress = clamp(patch.progress ?? m.progress, 0, 100)
+      const autoCompleted = progress >= 100
       return {
         ...m,
         difficulty: clamp(patch.difficulty ?? m.difficulty, 1, 5),
-        progress: clamp(patch.progress ?? m.progress, 0, 100),
+        progress,
         title: patch.title ?? m.title,
         deadline: patch.deadline ?? m.deadline,
+        completed: m.completed || autoCompleted,
+        completedAt: m.completedAt ?? (autoCompleted ? today() : null),
+      }
+    }),
+  }
+}
+
+export function setMoveCompleted(
+  state: AppState,
+  id: string,
+  completed: boolean,
+): AppState {
+  return {
+    ...state,
+    moves: state.moves.map((m) => {
+      if (m.id !== id) return m
+      if (m.progress >= 100 && !completed) return m
+      return {
+        ...m,
+        completed,
+        completedAt: completed ? (m.completedAt ?? today()) : null,
       }
     }),
   }
@@ -84,4 +107,8 @@ export function deleteMove(state: AppState, id: string): AppState {
 
 function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value))
+}
+
+function today(): string {
+  return new Date().toISOString().slice(0, 10)
 }
