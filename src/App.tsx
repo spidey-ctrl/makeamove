@@ -5,6 +5,7 @@ import {
   deleteMove,
   deleteProject,
   renameProject,
+  reopenMove,
   setMoveCompleted,
   setMoveDeadline,
   setProjectModel,
@@ -14,6 +15,7 @@ import {
 import { loadState, saveState } from './domain/storage'
 import { sortActiveMoves } from './domain/strategy'
 import { findOverdueMoves } from './domain/rollover'
+import { groupHistory } from './domain/history'
 import { addDays, todayString } from './domain/dates'
 import type { AppState, ExecutionModel, Move } from './domain/persistence'
 
@@ -301,9 +303,9 @@ function ProjectView({
   onBack: () => void
 }) {
   const [showForm, setShowForm] = useState(false)
+  const [view, setView] = useState<'active' | 'history'>('active')
   const ordered = sortActiveMoves(moves, model)
-  const completed = moves.filter((m) => m.completed)
-  const nothingToDo = ordered.length === 0 && completed.length > 0
+  const nothingToDo = ordered.length === 0 && moves.some((m) => m.completed)
 
   return (
     <main style={{ maxWidth: 640, margin: '0 auto', padding: '2rem 1rem' }}>
@@ -327,49 +329,73 @@ function ProjectView({
         </select>
       </label>
 
-      <h2 style={{ fontSize: 18, margin: '0 0 8px' }}>Active</h2>
-      {ordered.length === 0 ? (
-        <div
-          style={{
-            border: '1px solid var(--border)',
-            borderRadius: 8,
-            padding: 24,
-            textAlign: 'center',
-            marginBottom: 16,
-            background: 'var(--accent-bg)',
-          }}
+      <div style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
+        <button
+          type="button"
+          onClick={() => setView('active')}
+          style={
+            view === 'active'
+              ? { fontWeight: 'bold', borderColor: 'var(--accent)' }
+              : undefined
+          }
         >
-          <p style={{ color: 'var(--text-h)', marginBottom: 8 }}>
-            {nothingToDo
-              ? 'Everything in this project is done.'
-              : 'This project has no moves.'}
-          </p>
-          <button type="button" onClick={() => setShowForm(true)}>
-            Add a move
-          </button>
-        </div>
-      ) : (
-        <>
-          <button type="button" onClick={() => setShowForm(true)} style={{ marginBottom: 16 }}>
-            Add a move
-          </button>
-          <ul style={{ listStyle: 'none', padding: 0, margin: 0 }}>
-            {ordered.map((move) => (
-              <MoveRow key={move.id} move={move} apply={apply} />
-            ))}
-          </ul>
-        </>
-      )}
+          Active
+        </button>
+        <button
+          type="button"
+          onClick={() => setView('history')}
+          style={
+            view === 'history'
+              ? { fontWeight: 'bold', borderColor: 'var(--accent)' }
+              : undefined
+          }
+        >
+          History
+        </button>
+      </div>
 
-      {completed.length > 0 && (
+      {view === 'active' ? (
         <>
-          <h2 style={{ fontSize: 18, margin: '24px 0 8px' }}>Completed</h2>
-          <ul style={{ listStyle: 'none', padding: 0, margin: 0 }}>
-            {completed.map((move) => (
-              <MoveRow key={move.id} move={move} apply={apply} />
-            ))}
-          </ul>
+          <h2 style={{ fontSize: 18, margin: '0 0 8px' }}>Active moves</h2>
+          {ordered.length === 0 ? (
+            <div
+              style={{
+                border: '1px solid var(--border)',
+                borderRadius: 8,
+                padding: 24,
+                textAlign: 'center',
+                marginBottom: 16,
+                background: 'var(--accent-bg)',
+              }}
+            >
+              <p style={{ color: 'var(--text-h)', marginBottom: 8 }}>
+                {nothingToDo
+                  ? 'Everything in this project is done.'
+                  : 'This project has no moves.'}
+              </p>
+              <button type="button" onClick={() => setShowForm(true)}>
+                Add a move
+              </button>
+            </div>
+          ) : (
+            <>
+              <button
+                type="button"
+                onClick={() => setShowForm(true)}
+                style={{ marginBottom: 16 }}
+              >
+                Add a move
+              </button>
+              <ul style={{ listStyle: 'none', padding: 0, margin: 0 }}>
+                {ordered.map((move) => (
+                  <MoveRow key={move.id} move={move} apply={apply} />
+                ))}
+              </ul>
+            </>
+          )}
         </>
+      ) : (
+        <HistoryView moves={moves} apply={apply} />
       )}
 
       {showForm && (
@@ -382,6 +408,72 @@ function ProjectView({
         />
       )}
     </main>
+  )
+}
+
+function HistoryView({
+  moves,
+  apply,
+}: {
+  moves: Move[]
+  apply: (mutate: (s: AppState) => AppState) => void
+}) {
+  const groups = groupHistory(moves, todayString())
+
+  if (groups.length === 0) {
+    return (
+      <div
+        style={{
+          border: '1px solid var(--border)',
+          borderRadius: 8,
+          padding: 24,
+          textAlign: 'center',
+          background: 'var(--accent-bg)',
+        }}
+      >
+        <p style={{ color: 'var(--text-h)', marginBottom: 8 }}>
+          No completed moves yet.
+        </p>
+      </div>
+    )
+  }
+
+  return (
+    <div>
+      {groups.map((group) => (
+        <div key={group.label} style={{ marginBottom: 20 }}>
+          <h2 style={{ fontSize: 18, margin: '0 0 8px' }}>
+            {group.label === 'yesterday'
+              ? 'Yesterday'
+              : group.label === 'today'
+                ? 'Today'
+                : 'Earlier'}
+          </h2>
+          <ul style={{ listStyle: 'none', padding: 0, margin: 0 }}>
+            {group.moves.map((move) => (
+              <li
+                key={move.id}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 12,
+                  padding: '8px 0',
+                  borderBottom: '1px solid var(--border)',
+                }}
+              >
+                <span style={{ flex: 1, color: 'var(--text-h)' }}>{move.title}</span>
+                <span style={{ fontSize: 13, color: 'var(--text)', opacity: 0.8 }}>
+                  {move.completedAt}
+                </span>
+                <button type="button" onClick={() => apply((s) => reopenMove(s, move.id))}>
+                  Reopen
+                </button>
+              </li>
+            ))}
+          </ul>
+        </div>
+      ))}
+    </div>
   )
 }
 

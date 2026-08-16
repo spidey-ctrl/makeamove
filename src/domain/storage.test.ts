@@ -3,6 +3,7 @@ import { SCHEMA_VERSION, STORAGE_KEY } from './persistence'
 import {
   createMove,
   createProject,
+  reopenMove,
   setMoveCompleted,
   setMoveDeadline,
   setProjectModel,
@@ -11,6 +12,7 @@ import {
 import { loadState, saveState } from './storage'
 import { sortActiveMoves } from './strategy'
 import { findOverdueMoves } from './rollover'
+import { groupHistory } from './history'
 import { addDays } from './dates'
 
 describe('projects and moves through the storage integration seam', () => {
@@ -223,5 +225,30 @@ describe('projects and moves through the storage integration seam', () => {
         'low-hanging-fruit',
       ).map((m) => m.title),
     ).toEqual(['Due soon', 'Was urgent'])
+  })
+
+  it('reopen returns a move to the active list while its record stays in history after reload', () => {
+    let state = loadState()
+    state = createProject(state, 'College')
+    const projectId = state.projects[0].id
+    state = createMove(state, projectId, { title: 'Missed something', deadline: '2026-08-30' })
+    state = setMoveCompleted(state, state.moves[0].id, true)
+    const completedAt = state.moves[0].completedAt
+    saveState(state)
+
+    const reloaded = loadState()
+    expect(groupHistory(reloaded.moves, '2026-08-16').length).toBeGreaterThan(0)
+
+    const reopened = reopenMove(reloaded, reloaded.moves[0].id)
+    saveState(reopened)
+
+    const afterReopen = loadState()
+    const move = afterReopen.moves[0]
+    expect(move.completed).toBe(false)
+    expect(move.progress).toBe(0)
+    expect(move.completedAt).toBe(completedAt)
+    const stillInHistory = groupHistory(afterReopen.moves, '2026-08-16')
+    expect(stillInHistory.length).toBeGreaterThan(0)
+    expect(stillInHistory[0].moves.map((m) => m.id)).toContain(move.id)
   })
 })

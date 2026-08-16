@@ -4,6 +4,8 @@ import {
   createProject,
   createMove,
   deleteMove,
+  reopenMove,
+  setMoveCompleted,
   setMoveDeadline,
   setProjectModel,
   updateMove,
@@ -142,5 +144,48 @@ describe('rollover', () => {
     const id = withMove.moves[0].id
     const next = setMoveDeadline(withMove, id, '2026-09-06')
     expect(next.moves[0].deadline).toBe('2026-09-06')
+  })
+})
+
+describe('reopen', () => {
+  it('reopens a completed move to active, resetting progress and keeping completedAt', () => {
+    const withProject = createProject(emptyState(), 'College')
+    const projectId = withProject.projects[0].id
+    const withMove = createMove(withProject, projectId, {
+      title: 'Finish essay',
+      deadline: '2026-08-30',
+    })
+    const id = withMove.moves[0].id
+    const completed = setMoveCompleted(
+      updateMove(withMove, id, { progress: 75 }),
+      id,
+      true,
+    )
+    const recordedAt = completed.moves[0].completedAt
+
+    const reopened = reopenMove(completed, id)
+    expect(reopened.moves[0].completed).toBe(false)
+    expect(reopened.moves[0].progress).toBe(0)
+    expect(reopened.moves[0].completedAt).toBe(recordedAt)
+  })
+
+  it('leaves other moves untouched when reopening one', () => {
+    const withProject = createProject(emptyState(), 'College')
+    const projectId = withProject.projects[0].id
+    const withTwo = createMove(
+      createMove(withProject, projectId, { title: 'A', deadline: '2026-08-30' }),
+      projectId,
+      { title: 'B', deadline: '2026-09-01' },
+    )
+    const a = withTwo.moves.find((m) => m.title === 'A')!
+    const b = withTwo.moves.find((m) => m.title === 'B')!
+    const completed = setMoveCompleted(
+      updateMove(withTwo, a.id, { progress: 100 }),
+      a.id,
+      true,
+    )
+    const next = reopenMove(completed, a.id)
+    expect(next.moves.find((m) => m.id === b.id)!.completed).toBe(false)
+    expect(next.moves.find((m) => m.id === b.id)!.progress).toBe(0)
   })
 })

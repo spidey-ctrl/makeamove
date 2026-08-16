@@ -112,6 +112,15 @@ export function setMoveDeadline(state: AppState, id: string, deadline: string): 
   }
 }
 
+export function reopenMove(state: AppState, id: string): AppState {
+  return {
+    ...state,
+    moves: state.moves.map((m) =>
+      m.id === id ? { ...m, completed: false, progress: 0 } : m,
+    ),
+  }
+}
+
 function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value))
 }
