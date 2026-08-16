@@ -5,11 +5,13 @@ import {
   deleteMove,
   deleteProject,
   renameProject,
+  setProjectModel,
   updateMove,
   type MovePatch,
 } from './domain/store'
 import { loadState, saveState } from './domain/storage'
-import type { AppState, Move } from './domain/persistence'
+import { sortActiveMoves } from './domain/strategy'
+import type { AppState, ExecutionModel, Move } from './domain/persistence'
 
 function App() {
   const [state, setState] = useState<AppState>(loadState)
@@ -52,6 +54,7 @@ function App() {
       <ProjectView
         projectId={project.id}
         projectName={project.name}
+        model={project.model}
         moves={state.moves.filter((m) => m.projectId === project.id)}
         apply={apply}
         onBack={() => setProjectId(null)}
@@ -141,17 +144,20 @@ function App() {
 function ProjectView({
   projectId,
   projectName,
+  model,
   moves,
   apply,
   onBack,
 }: {
   projectId: string
   projectName: string
+  model: ExecutionModel
   moves: Move[]
   apply: (mutate: (s: AppState) => AppState) => void
   onBack: () => void
 }) {
   const [showForm, setShowForm] = useState(false)
+  const ordered = sortActiveMoves(moves, model)
 
   return (
     <main style={{ maxWidth: 640, margin: '0 auto', padding: '2rem 1rem' }}>
@@ -160,7 +166,22 @@ function ProjectView({
       </button>
       <h1>{projectName}</h1>
 
-      {moves.length === 0 ? (
+      <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 16 }}>
+        Execution model:
+        <select
+          value={model}
+          onChange={(e) =>
+            apply((s) => setProjectModel(s, projectId, e.target.value as ExecutionModel))
+          }
+          aria-label="Execution model"
+          style={{ padding: '4px 8px' }}
+        >
+          <option value="low-hanging-fruit">Low Hanging Fruit</option>
+          <option value="high-hanging-fruit">High Hanging Fruit</option>
+        </select>
+      </label>
+
+      {ordered.length === 0 ? (
         <div
           style={{
             border: '1px solid var(--border)',
@@ -172,10 +193,10 @@ function ProjectView({
           }}
         >
           <p style={{ color: 'var(--text-h)', marginBottom: 8 }}>
-            This project has no moves.
+            This project has no active moves.
           </p>
           <button type="button" onClick={() => setShowForm(true)}>
-            Add your first move
+            Add a move
           </button>
         </div>
       ) : (
@@ -184,7 +205,7 @@ function ProjectView({
             Add a move
           </button>
           <ul style={{ listStyle: 'none', padding: 0, margin: 0 }}>
-            {moves.map((move) => (
+            {ordered.map((move) => (
               <MoveRow key={move.id} move={move} apply={apply} />
             ))}
           </ul>

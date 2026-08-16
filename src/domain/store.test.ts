@@ -4,6 +4,7 @@ import {
   createProject,
   createMove,
   deleteMove,
+  setProjectModel,
   updateMove,
 } from './store'
 
@@ -112,5 +113,19 @@ describe('move mutations', () => {
     const next = deleteMove(withTwo, a.id)
     expect(next.moves).toHaveLength(1)
     expect(next.moves[0].title).toBe('B')
+  })
+})
+
+describe('execution model', () => {
+  it('createProject defaults to low hanging fruit', () => {
+    const next = createProject(emptyState(), 'College')
+    expect(next.projects[0].model).toBe('low-hanging-fruit')
+  })
+
+  it('setProjectModel switches an existing project', () => {
+    const state = createProject(emptyState(), 'College')
+    const id = state.projects[0].id
+    const next = setProjectModel(state, id, 'high-hanging-fruit')
+    expect(next.projects[0].model).toBe('high-hanging-fruit')
   })
 })

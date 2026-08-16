@@ -21,7 +21,12 @@ describe('projects and moves through the storage integration seam', () => {
 
     const reloaded = loadState()
     expect(reloaded.projects).toEqual([
-      { id: projectId, name: 'College', createdAt: expect.any(String) },
+      {
+        id: projectId,
+        name: 'College',
+        createdAt: expect.any(String) as unknown,
+        model: 'low-hanging-fruit',
+      },
     ])
     expect(reloaded.moves).toHaveLength(1)
     expect(reloaded.moves[0]).toMatchObject({
@@ -38,7 +43,7 @@ describe('projects and moves through the storage integration seam', () => {
   it('reload produces a clean empty app when storage is untouched', () => {
     expect(window.localStorage.getItem(STORAGE_KEY)).toBeNull()
     expect(loadState()).toEqual({
-      schemaVersion: 1,
+      schemaVersion: 2,
       projects: [],
       moves: [],
     })
