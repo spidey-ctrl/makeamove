@@ -43,6 +43,7 @@ describe('persistence seam', () => {
           completedAt: null,
         },
       ],
+      globalModel: 'high-hanging-fruit' as const,
     }
     expect(hydrate(JSON.stringify(state))).toEqual(state)
   })
@@ -84,6 +85,7 @@ describe('schema v1 -> v2 migration', () => {
     expect(next.schemaVersion).toBe(SCHEMA_VERSION)
     expect(next.projects).toHaveLength(2)
     expect(next.projects.every((p) => p.model === 'low-hanging-fruit')).toBe(true)
+    expect(next.globalModel).toBe('low-hanging-fruit')
     expect(next.moves).toEqual([])
   })
 
@@ -95,5 +97,33 @@ describe('schema v1 -> v2 migration', () => {
       ],
     }
     expect(migrate(current)).toBe(current)
+  })
+})
+
+describe('schema v2 -> v3 migration', () => {
+  const v2State = {
+    schemaVersion: 2,
+    projects: [
+      { id: 'p1', name: 'College', createdAt: '2026-08-16', model: 'high-hanging-fruit' as const },
+    ],
+    moves: [],
+  }
+
+  it('migrate defaults the new global model to low-hanging-fruit', () => {
+    const next = migrate(v2State)
+    expect(next.schemaVersion).toBe(SCHEMA_VERSION)
+    expect(next.globalModel).toBe('low-hanging-fruit')
+    expect(next.projects[0].model).toBe('high-hanging-fruit')
+  })
+
+  it('preserves an already-set global model through migration', () => {
+    const next = migrate({ ...v2State, globalModel: 'high-hanging-fruit' as const })
+    expect(next.globalModel).toBe('high-hanging-fruit')
+  })
+
+  it('hydrate upgrades stored v2 data transparently', () => {
+    const next = hydrate(JSON.stringify(v2State))
+    expect(next.schemaVersion).toBe(SCHEMA_VERSION)
+    expect(next.globalModel).toBe('low-hanging-fruit')
   })
 })

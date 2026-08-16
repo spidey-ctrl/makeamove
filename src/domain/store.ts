@@ -28,6 +28,10 @@ export function setProjectModel(
   }
 }
 
+export function setGlobalModel(state: AppState, model: ExecutionModel): AppState {
+  return { ...state, globalModel: model }
+}
+
 export function deleteProject(state: AppState, id: string): AppState {
   return {
     ...state,

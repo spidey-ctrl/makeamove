@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { addDays, isOverdue, todayString } from './dates'
+import { addDays, daysUntil, isOverdue, todayString } from './dates'
 
 describe('overdue date logic', () => {
   it('counts a move overdue when its deadline is strictly before today', () => {
@@ -29,5 +29,20 @@ describe('overdue date logic', () => {
   it('todayString uses the local calendar date', () => {
     expect(todayString(new Date(2026, 7, 16))).toBe('2026-08-16')
     expect(todayString(new Date(2026, 0, 5))).toBe('2026-01-05')
+  })
+})
+
+describe('daysUntil', () => {
+  it('counts calendar days between today and the deadline', () => {
+    expect(daysUntil('2026-08-20', '2026-08-16')).toBe(4)
+    expect(daysUntil('2026-08-16', '2026-08-16')).toBe(0)
+  })
+
+  it('is negative when the deadline already passed', () => {
+    expect(daysUntil('2026-08-10', '2026-08-16')).toBe(-6)
+  })
+
+  it('handles month boundaries', () => {
+    expect(daysUntil('2026-09-01', '2026-08-30')).toBe(2)
   })
 })

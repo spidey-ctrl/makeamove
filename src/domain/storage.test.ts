@@ -4,6 +4,7 @@ import {
   createMove,
   createProject,
   reopenMove,
+  setGlobalModel,
   setMoveCompleted,
   setMoveDeadline,
   setProjectModel,
@@ -13,6 +14,7 @@ import { loadState, saveState } from './storage'
 import { sortActiveMoves } from './strategy'
 import { findOverdueMoves } from './rollover'
 import { groupHistory } from './history'
+import { nearestDueMoves } from './focus'
 import { addDays } from './dates'
 
 describe('projects and moves through the storage integration seam', () => {
@@ -58,6 +60,7 @@ describe('projects and moves through the storage integration seam', () => {
       schemaVersion: SCHEMA_VERSION,
       projects: [],
       moves: [],
+      globalModel: 'low-hanging-fruit',
     })
   })
 
@@ -128,6 +131,7 @@ describe('projects and moves through the storage integration seam', () => {
     const reloaded = loadState()
     expect(reloaded.schemaVersion).toBe(SCHEMA_VERSION)
     expect(reloaded.projects[0].model).toBe('low-hanging-fruit')
+    expect(reloaded.globalModel).toBe('low-hanging-fruit')
   })
 
   it('persists the execution model switch across a reload', () => {
@@ -314,5 +318,40 @@ describe('projects and moves through the storage integration seam', () => {
       'low-hanging-fruit',
     )
     expect(ordered.map((m) => m.title)).toEqual(['Back in the list'])
+  })
+
+  it('persists the global model and surfaces the nearest due moves across all projects after reload', () => {
+    let state = loadState()
+    state = setGlobalModel(state, 'high-hanging-fruit')
+    state = createProject(state, 'College')
+    const collegeId = state.projects[0].id
+    state = createMove(state, collegeId, { title: 'Essay', deadline: '2026-08-30' })
+    state = createProject(state, 'Work')
+    const workId = state.projects[1].id
+    state = createMove(state, workId, { title: 'Report', deadline: '2026-08-19' })
+    state = createMove(state, workId, { title: 'Slides', deadline: '2026-09-10' })
+    saveState(state)
+
+    const reloaded = loadState()
+    expect(reloaded.globalModel).toBe('high-hanging-fruit')
+    expect(nearestDueMoves(reloaded.moves, '2026-08-16', 2).map((m) => m.title)).toEqual([
+      'Report',
+      'Essay',
+    ])
+    expect(
+      sortActiveMoves(
+        reloaded.moves.filter((m) => !m.completed),
+        reloaded.globalModel,
+      ).map((m) => m.title),
+    ).toEqual(['Report', 'Essay', 'Slides'])
+  })
+
+  it('the global model switch is saved for a future reload', () => {
+    let state = loadState()
+    state = createProject(state, 'College')
+    const switched = setGlobalModel(state, 'high-hanging-fruit')
+    saveState(switched)
+
+    expect(loadState().globalModel).toBe('high-hanging-fruit')
   })
 })

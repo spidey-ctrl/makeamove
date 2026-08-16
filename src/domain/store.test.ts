@@ -8,6 +8,7 @@ import {
   setMoveCompleted,
   setMoveDeadline,
   setProjectModel,
+  setGlobalModel,
   updateMove,
 } from './store'
 
@@ -187,5 +188,14 @@ describe('reopen', () => {
     const next = reopenMove(completed, a.id)
     expect(next.moves.find((m) => m.id === b.id)!.completed).toBe(false)
     expect(next.moves.find((m) => m.id === b.id)!.progress).toBe(0)
+  })
+})
+
+describe('global model', () => {
+  it('switches the global execution model without touching projects', () => {
+    const withProject = createProject(emptyState(), 'College')
+    const next = setGlobalModel(withProject, 'high-hanging-fruit')
+    expect(next.globalModel).toBe('high-hanging-fruit')
+    expect(next.projects[0].model).toBe('low-hanging-fruit')
   })
 })

@@ -22,6 +22,7 @@ export type AppState = {
   schemaVersion: number
   projects: Project[]
   moves: Move[]
+  globalModel: ExecutionModel
 }
 
 export type PersistedProject = {
@@ -35,9 +36,10 @@ export type PersistedState = {
   schemaVersion: number
   projects: PersistedProject[]
   moves: Move[]
+  globalModel?: ExecutionModel
 }
 
-export const SCHEMA_VERSION = 2
+export const SCHEMA_VERSION = 3
 export const STORAGE_KEY = 'makeamove'
 
 export function emptyState(): AppState {
@@ -45,6 +47,7 @@ export function emptyState(): AppState {
     schemaVersion: SCHEMA_VERSION,
     projects: [],
     moves: [],
+    globalModel: 'low-hanging-fruit',
   }
 }
 
@@ -65,24 +68,27 @@ export function hydrate(raw: string | null): AppState {
 }
 
 export function migrate(state: PersistedState): AppState {
-  let current: AppState
-  if (state.schemaVersion < 2) {
-    current = migrateV1ToV2(state)
-  } else {
-    current = state as AppState
+  let current: PersistedState = state
+  let version = state.schemaVersion
+  if (version < 2) {
+    current = {
+      ...current,
+      schemaVersion: 2,
+      projects: current.projects.map((p) => ({
+        ...p,
+        model: p.model ?? 'low-hanging-fruit' as ExecutionModel,
+      })),
+    }
+    version = 2
   }
-  return current
-}
-
-function migrateV1ToV2(state: PersistedState): AppState {
-  return {
-    schemaVersion: 2,
-    projects: state.projects.map((p) => ({
-      ...p,
-      model: p.model ?? 'low-hanging-fruit',
-    })),
-    moves: state.moves,
+  if (version < 3) {
+    current = {
+      ...current,
+      schemaVersion: 3,
+      globalModel: current.globalModel ?? ('low-hanging-fruit' as ExecutionModel),
+    }
   }
+  return current as AppState
 }
 
 export function serialize(state: AppState): string {
