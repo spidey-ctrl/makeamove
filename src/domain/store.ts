@@ -43,24 +43,30 @@ export function deleteProject(state: AppState, id: string): AppState {
 export type NewMove = {
   title: string
   deadline: string
+  deadlineTime?: string | null
+  difficulty?: number
+  progress?: number
 }
 
 export function createMove(state: AppState, projectId: string, input: NewMove): AppState {
+  const progress = clamp(input.progress ?? 0, 0, 100)
+  const autoCompleted = progress >= 100
   const move: Move = {
     id: crypto.randomUUID(),
     projectId,
     title: input.title,
-    difficulty: 3,
-    progress: 0,
+    difficulty: clamp(input.difficulty ?? 3, 1, 5),
+    progress,
     deadline: input.deadline,
-    completed: false,
-    completedAt: null,
+    deadlineTime: input.deadlineTime ?? null,
+    completed: autoCompleted,
+    completedAt: autoCompleted ? today() : null,
   }
   return { ...state, moves: [...state.moves, move] }
 }
 
 export type MovePatch = Partial<
-  Pick<Move, 'title' | 'difficulty' | 'progress' | 'deadline'>
+  Pick<Move, 'title' | 'difficulty' | 'progress' | 'deadline' | 'deadlineTime'>
 >
 
 export function updateMove(state: AppState, id: string, patch: MovePatch): AppState {
@@ -76,6 +82,8 @@ export function updateMove(state: AppState, id: string, patch: MovePatch): AppSt
         progress,
         title: patch.title ?? m.title,
         deadline: patch.deadline ?? m.deadline,
+        deadlineTime:
+          patch.deadlineTime === undefined ? m.deadlineTime : (patch.deadlineTime ?? null),
         completed: m.completed || autoCompleted,
         completedAt: m.completedAt ?? (autoCompleted ? today() : null),
       }

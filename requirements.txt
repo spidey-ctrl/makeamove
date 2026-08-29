@@ -1,0 +1,8 @@
+fastapi
+mangum
+psycopg[binary]
+bcrypt
+PyJWT
+email-validator
+httpx
+python-dotenv

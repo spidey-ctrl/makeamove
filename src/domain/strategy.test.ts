@@ -74,4 +74,26 @@ describe('strategy engine', () => {
     const only = move({ id: 'solo', difficulty: 3 })
     expect(sortActiveMoves([only], 'high-hanging-fruit')).toEqual([only])
   })
+
+  it('deadline first orders by due date ascending', () => {
+    const moves = [
+      move({ id: 'late', difficulty: 5, deadline: '2026-09-10' }),
+      move({ id: 'early', difficulty: 1, deadline: '2026-08-20' }),
+    ]
+    expect(sortActiveMoves(moves, 'deadline-first').map((m) => m.id)).toEqual([
+      'early',
+      'late',
+    ])
+  })
+
+  it('deadline first falls back to easiest for same-day deadlines', () => {
+    const moves = [
+      move({ id: 'hard', difficulty: 5, deadline: '2026-08-20' }),
+      move({ id: 'easy', difficulty: 1, deadline: '2026-08-20' }),
+    ]
+    expect(sortActiveMoves(moves, 'deadline-first').map((m) => m.id)).toEqual([
+      'easy',
+      'hard',
+    ])
+  })
 })

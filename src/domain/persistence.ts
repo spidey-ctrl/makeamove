@@ -1,4 +1,4 @@
-export type ExecutionModel = 'low-hanging-fruit' | 'high-hanging-fruit'
+export type ExecutionModel = 'low-hanging-fruit' | 'high-hanging-fruit' | 'deadline-first'
 
 export type Project = {
   id: string
@@ -14,6 +14,7 @@ export type Move = {
   difficulty: number
   progress: number
   deadline: string
+  deadlineTime?: string | null
   completed: boolean
   completedAt: string | null
 }

@@ -13,19 +13,28 @@ import {
   updateMove,
   type MovePatch,
 } from './domain/store'
-import { loadState, saveState } from './domain/storage'
+import { loadState, saveState, loadOwner, saveOwner, clearLocalData } from './domain/storage'
 import { sortActiveMoves } from './domain/strategy'
 import { findOverdueMoves } from './domain/rollover'
 import { groupHistory } from './domain/history'
 import { nearestDueMoves } from './domain/focus'
 import { addDays, daysUntil, isOverdue, todayString } from './domain/dates'
-import type { AppState, ExecutionModel, Move } from './domain/persistence'
+import { mergeStates } from './domain/sync'
+import type { AppState, ExecutionModel, Move, Project } from './domain/persistence'
+import { emptyState } from './domain/persistence'
+import { useAuth } from './auth/authContext'
+import { AuthPages } from './auth/AuthPages'
+import { api } from './api/client'
 
 function App() {
+  const { user, loading, logout } = useAuth()
   const [state, setState] = useState<AppState>(loadState)
   const [projectId, setProjectId] = useState<string | null>(null)
+  const [showStart, setShowStart] = useState(true)
+  const [showAllMoves, setShowAllMoves] = useState(false)
   const [rolloverDismissedAt, setRolloverDismissedAt] = useState(0)
   const [toasts, setToasts] = useState<string[]>([])
+  const [syncStatus, setSyncStatus] = useState<'idle' | 'syncing' | 'synced' | 'offline'>('idle')
 
   const latest = useRef(state)
   latest.current = state
@@ -57,8 +66,189 @@ function App() {
     return () => clearTimeout(handle)
   }, [toasts])
 
+  const hydratedRef = useRef(false)
+  useEffect(() => {
+    if (!user || hydratedRef.current) return
+    hydratedRef.current = true
+    const owner = loadOwner()
+    if (owner !== null && owner !== user.email) {
+      clearLocalData()
+      setState(emptyState())
+    }
+    api
+      .getState()
+      .then(({ state: server }) => {
+        saveOwner(user.email)
+        if (!server) {
+          setSyncStatus('synced')
+          return
+        }
+        setState((current) => {
+          const merged = mergeStates(current, server)
+          if (merged !== current) {
+            saveState(merged)
+            return merged
+          }
+          return current
+        })
+        setSyncStatus('synced')
+      })
+      .catch(() => setSyncStatus('offline'))
+  }, [user])
+
+  const pushTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const lastPushed = useRef('')
+  useEffect(() => {
+    if (!user) return
+    if (pushTimer.current) clearTimeout(pushTimer.current)
+    pushTimer.current = setTimeout(() => {
+      const snapshot = JSON.stringify(state)
+      if (snapshot === lastPushed.current) return
+      setSyncStatus('syncing')
+      api
+        .putState(state)
+        .then(() => {
+          lastPushed.current = snapshot
+          setSyncStatus('synced')
+        })
+        .catch(() => setSyncStatus('offline'))
+    }, 1500)
+    return () => {
+      if (pushTimer.current) clearTimeout(pushTimer.current)
+    }
+  }, [state, user])
+
+  function handleLogout() {
+    clearLocalData()
+    setState(emptyState())
+    logout()
+  }
+
+  function applyHash(hash: string) {
+    if (hash.startsWith('#p/')) {
+      setProjectId(decodeURIComponent(hash.slice(3)))
+      setShowStart(false)
+      setShowAllMoves(false)
+    } else if (hash === '#all') {
+      setProjectId(null)
+      setShowStart(false)
+      setShowAllMoves(true)
+    } else if (hash === '#home') {
+      setProjectId(null)
+      setShowStart(false)
+      setShowAllMoves(false)
+    } else {
+      setProjectId(null)
+      setShowStart(true)
+      setShowAllMoves(false)
+    }
+  }
+
+  useEffect(() => {
+    function parseView() {
+      applyHash(window.location.hash)
+    }
+    parseView()
+    window.addEventListener('popstate', parseView)
+    return () => window.removeEventListener('popstate', parseView)
+  }, [])
+
+  const homeReturnRef = useRef<string | null>(null)
+  useEffect(() => {
+    const hash = window.location.hash
+    if (hash.startsWith('#p/') || hash === '#all' || hash === '#home') {
+      homeReturnRef.current = hash
+    }
+  }, [projectId, showAllMoves, showStart])
+
+  useEffect(() => {
+    let removeListener: (() => void) | undefined
+    let disposed = false
+    async function registerBackButton() {
+      const { Capacitor } = await import('@capacitor/core')
+      if (disposed || !Capacitor.isNativePlatform()) return
+      const { App } = await import('@capacitor/app')
+      if (disposed) return
+      const listener = await App.addListener('backButton', ({ canGoBack }) => {
+        if (canGoBack) {
+          window.history.back()
+          return
+        }
+        const target = homeReturnRef.current
+        if (target && (window.location.hash === '' || window.location.hash === '#start')) {
+          const depth = (window.history.state?.depth ?? 0) + 1
+          window.history.pushState({ depth }, '', target)
+          applyHash(target)
+        } else {
+          void App.minimizeApp()
+        }
+      })
+      removeListener = () => void listener.remove()
+    }
+
+    void registerBackButton()
+    return () => {
+      disposed = true
+      removeListener?.()
+    }
+  }, [])
+
+  function pushView(hash: string) {
+    const depth = (window.history.state?.depth ?? 0) + 1
+    window.history.pushState({ depth }, '', hash)
+  }
+
+  function goBack() {
+    if ((window.history.state?.depth ?? 0) > 0) {
+      window.history.back()
+    } else {
+      window.history.replaceState(null, '', window.location.pathname + window.location.search)
+      setProjectId(null)
+      setShowStart(true)
+      setShowAllMoves(false)
+    }
+  }
+
+  function openHome() {
+    pushView('#home')
+    setProjectId(null)
+    setShowStart(false)
+    setShowAllMoves(false)
+  }
+
+  function openAll() {
+    pushView('#all')
+    setProjectId(null)
+    setShowStart(false)
+    setShowAllMoves(true)
+  }
+
+  function openProjectFromQueue(id: string) {
+    pushView(`#p/${encodeURIComponent(id)}`)
+    setShowAllMoves(false)
+    setProjectId(id)
+  }
+
   function apply(mutate: (s: AppState) => AppState) {
     setState((s) => mutate(s))
+  }
+
+  if (loading) {
+    return (
+      <main className="start-view">
+        <div className="start-inner">
+          <div className="start-mark-row">
+            <span className="start-mark">→</span>
+            <span className="start-name">MakeAMove</span>
+          </div>
+          <p className="start-foot">Loading…</p>
+        </div>
+      </main>
+    )
+  }
+
+  if (!user) {
+    return <AuthPages />
   }
 
   const project = projectId
@@ -70,12 +260,25 @@ function App() {
 
   return (
     <>
-      <header className="brand-bar">
-        <div className="brand-bar-inner">
-          <span className="brand-mark">→</span>
-          <span className="brand-name">MakeAMove</span>
-        </div>
-      </header>
+      {!showStart && (
+        <header className="brand-bar">
+          <div className="brand-bar-inner">
+            <span className="brand-mark">→</span>
+            <span className="brand-name">MakeAMove</span>
+            <span className="brand-bar-spacer" />
+            {syncStatus !== 'idle' && (
+              <span className={`sync-pill sync-${syncStatus}`}>
+                {syncStatus === 'syncing' && 'Saving…'}
+                {syncStatus === 'synced' && 'Synced'}
+                {syncStatus === 'offline' && 'Offline'}
+              </span>
+            )}
+            <button type="button" className="btn btn-ghost btn-sm" onClick={handleLogout}>
+              Log out
+            </button>
+          </div>
+        </header>
+      )}
 
       {showRollover && (
         <RolloverPrompt
@@ -90,7 +293,12 @@ function App() {
         />
       )}
 
-      {project ? (
+      {showStart ? (
+        <StartView
+          onProjects={openHome}
+          onAll={openAll}
+        />
+      ) : project ? (
         <ProjectView
           projectId={project.id}
           projectName={project.name}
@@ -98,10 +306,72 @@ function App() {
           moves={state.moves.filter((m) => m.projectId === project.id)}
           today={today}
           apply={apply}
-          onBack={() => setProjectId(null)}
+          onBack={goBack}
+        />
+      ) : showAllMoves ? (
+        <AllMovesView
+          moves={state.moves}
+          projects={state.projects}
+          globalModel={state.globalModel}
+          today={today}
+          onBack={goBack}
+          onOpenProject={openProjectFromQueue}
+          onSelectModel={(m) => apply((s) => setGlobalModel(s, m))}
         />
       ) : (
         <main className="page">
+          <section className="hero" aria-label="Welcome">
+            <div className="hero-mark" aria-hidden="true">
+              →
+            </div>
+            <h1 className="hero-title">
+              Make the <span className="hero-title-accent">move.</span>
+            </h1>
+            <p className="hero-sub">
+              The momentum planner for list-overwhelm. Break big goals into small{' '}
+              <strong>moves</strong> you can win today.
+            </p>
+
+            {state.projects.length === 0 ? (
+              <p className="hero-cta-hint">
+                Create your first project below, then stack moves and pick a strategy.
+              </p>
+            ) : (
+              <div className="hero-stats">
+                <div className="hero-stat">
+                  <span className="hero-stat-value">{state.projects.length}</span>
+                  <span className="hero-stat-label">Projects</span>
+                </div>
+                <div className="hero-stat">
+                  <span className="hero-stat-value">
+                    {state.moves.filter((m) => !m.completed).length}
+                  </span>
+                  <span className="hero-stat-label">Active moves</span>
+                </div>
+                <div className="hero-stat">
+                  <span className="hero-stat-value">
+                    {state.moves.filter((m) => m.completedAt === today).length}
+                  </span>
+                  <span className="hero-stat-label">Done today</span>
+                </div>
+                <div
+                  className={`hero-stat ${
+                    state.moves.filter((m) => !m.completed && isOverdue(m.deadline, today))
+                      .length > 0
+                      ? 'hero-stat-warn'
+                      : ''
+                  }`}
+                >
+                  <span className="hero-stat-value">
+                    {state.moves.filter((m) => !m.completed && isOverdue(m.deadline, today))
+                      .length}
+                  </span>
+                  <span className="hero-stat-label">Overdue</span>
+                </div>
+              </div>
+            )}
+          </section>
+
           <div className="page-head">
             <h1 className="page-title">Projects</h1>
             <NewProjectCard onCreate={(name) => apply((s) => createProject(s, name))} />
@@ -110,19 +380,21 @@ function App() {
           {(() => {
             const dueSoon = nearestDueMoves(state.moves, today, 3)
             const allActive = state.moves.filter((m) => !m.completed)
-            const globalOrdered = sortActiveMoves(allActive, state.globalModel)
             const projectName = (id: string) =>
               state.projects.find((p) => p.id === id)?.name ?? 'Untitled'
             if (dueSoon.length === 0) return null
             return (
               <NextUpWidget
                 due={dueSoon}
-                all={globalOrdered}
-                globalModel={state.globalModel}
+                total={allActive.length}
                 projectName={projectName}
                 today={today}
-                onOpenProject={setProjectId}
-                onSelectModel={(m) => apply((s) => setGlobalModel(s, m))}
+                onOpenProject={openProjectFromQueue}
+                onShowAll={() => {
+                  pushView('#all')
+                  setProjectId(null)
+                  setShowAllMoves(true)
+                }}
               />
             )
           })()}
@@ -225,25 +497,54 @@ function NewProjectCard({ onCreate }: { onCreate: (name: string) => void }) {
   )
 }
 
+function StartView({
+  onProjects,
+  onAll,
+}: {
+  onProjects: () => void
+  onAll: () => void
+}) {
+  return (
+    <main className="start-view">
+      <div className="start-inner">
+        <div className="start-mark-row">
+          <span className="start-mark">→</span>
+          <span className="start-name">MakeAMove</span>
+        </div>
+        <h1 className="start-title">Make the move.</h1>
+        <p className="start-sub">
+          The move planner. Break big things down, pick your next move, and keep momentum.
+        </p>
+        <div className="start-actions">
+          <button type="button" className="start-action start-primary" onClick={onProjects}>
+            Go to your projects
+          </button>
+          <button type="button" className="start-action start-secondary" onClick={onAll}>
+            All moves
+          </button>
+        </div>
+        <p className="start-foot">Small steps. Real progress.</p>
+      </div>
+    </main>
+  )
+}
+
 function NextUpWidget({
   due,
-  all,
-  globalModel,
+  total,
   projectName,
   today,
   onOpenProject,
-  onSelectModel,
+  onShowAll,
 }: {
   due: Move[]
-  all: Move[]
-  globalModel: ExecutionModel
+  total: number
   projectName: (id: string) => string
   today: string
   onOpenProject: (id: string) => void
-  onSelectModel: (model: ExecutionModel) => void
+  onShowAll: () => void
 }) {
-  const [expanded, setExpanded] = useState(false)
-  const hidden = Math.max(0, all.length - due.length)
+  const hidden = Math.max(0, total - due.length)
 
   return (
     <section className="card nextup-card" aria-label="Next up">
@@ -263,65 +564,16 @@ function NextUpWidget({
         >
           <span className="nextup-name">{projectName(move.projectId)}</span>
           <span className="nextup-title-text">{move.title}</span>
-          <span className="pill pill-accent">{dueLabel(today, move.deadline)}</span>
+          <span className="pill pill-accent">
+            {dueLabel(today, move.deadline, move.deadlineTime)}
+          </span>
         </button>
       ))}
 
       <div className="nextup-expand">
-        {expanded ? (
-          <>
-            <div className="nextup-expand-head" style={{ marginBottom: 8 }}>
-              <span className="section-title">Order by model</span>
-              <div className="tabbar" role="tablist" aria-label="Global execution model">
-                <button
-                  type="button"
-                  role="tab"
-                  aria-selected={globalModel === 'low-hanging-fruit'}
-                  className={`tab ${globalModel === 'low-hanging-fruit' ? 'tab-active' : ''}`}
-                  onClick={() => onSelectModel('low-hanging-fruit')}
-                >
-                  Easiest first
-                </button>
-                <button
-                  type="button"
-                  role="tab"
-                  aria-selected={globalModel === 'high-hanging-fruit'}
-                  className={`tab ${globalModel === 'high-hanging-fruit' ? 'tab-active' : ''}`}
-                  onClick={() => onSelectModel('high-hanging-fruit')}
-                >
-                  Hardest first
-                </button>
-              </div>
-            </div>
-            {all.map((move) => {
-              const overdue = isOverdue(move.deadline, today)
-              return (
-                <button
-                  key={move.id}
-                  type="button"
-                  className="nextup-row"
-                  onClick={() => onOpenProject(move.projectId)}
-                >
-                  <span className="nextup-name">{projectName(move.projectId)}</span>
-                  <span className="nextup-title-text">{move.title}</span>
-                  <DifficultyTag value={move.difficulty} />
-                  {overdue ? (
-                    <span className="pill pill-warn">Overdue</span>
-                  ) : (
-                    <span className="pill pill-accent">{dueLabel(today, move.deadline)}</span>
-                  )}
-                </button>
-              )
-            })}
-          </>
-        ) : null}
         <div style={{ textAlign: 'right' }}>
-          <button
-            type="button"
-            className="btn btn-ghost btn-sm"
-            onClick={() => setExpanded((s) => !s)}
-          >
-            {expanded ? 'Show less' : expandedLabel(all, due)}
+          <button type="button" className="btn btn-ghost btn-sm" onClick={onShowAll}>
+            Show all {total} move{total === 1 ? '' : 's'}
           </button>
         </div>
       </div>
@@ -329,16 +581,120 @@ function NextUpWidget({
   )
 }
 
-function expandedLabel(all: Move[], due: Move[]) {
-  const hidden = all.length - due.length
-  return hidden > 0 ? `Show all ${all.length} moves` : 'Show all moves'
+function AllMovesView({
+  moves,
+  projects,
+  globalModel,
+  today,
+  onBack,
+  onOpenProject,
+  onSelectModel,
+}: {
+  moves: Move[]
+  projects: Project[]
+  globalModel: ExecutionModel
+  today: string
+  onBack: () => void
+  onOpenProject: (id: string) => void
+  onSelectModel: (model: ExecutionModel) => void
+}) {
+  const projectName = (id: string) => projects.find((p) => p.id === id)?.name ?? 'Untitled'
+  const active = moves.filter((m) => !m.completed)
+  const ordered = sortActiveMoves(active, globalModel)
+  const orderLabel =
+    globalModel === 'deadline-first'
+      ? 'nearest deadline first'
+      : globalModel === 'high-hanging-fruit'
+        ? 'hardest first'
+        : 'easiest first'
+
+  return (
+    <main className="page">
+      <button type="button" className="back-btn" onClick={onBack}>
+        ← Back
+      </button>
+      <div className="page-head">
+        <div>
+          <h1 className="page-title">All moves</h1>
+          <p className="allmoves-sub">
+            {active.length} active move{active.length === 1 ? '' : 's'} · {orderLabel}
+          </p>
+        </div>
+        <div className="tabbar" role="tablist" aria-label="Global execution model">
+          <button
+            type="button"
+            role="tab"
+            aria-selected={globalModel === 'low-hanging-fruit'}
+            className={`tab ${globalModel === 'low-hanging-fruit' ? 'tab-active' : ''}`}
+            onClick={() => onSelectModel('low-hanging-fruit')}
+          >
+            Easiest first
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={globalModel === 'high-hanging-fruit'}
+            className={`tab ${globalModel === 'high-hanging-fruit' ? 'tab-active' : ''}`}
+            onClick={() => onSelectModel('high-hanging-fruit')}
+          >
+            Hardest first
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={globalModel === 'deadline-first'}
+            className={`tab ${globalModel === 'deadline-first' ? 'tab-active' : ''}`}
+            onClick={() => onSelectModel('deadline-first')}
+          >
+            Nearest deadline
+          </button>
+        </div>
+      </div>
+
+      {ordered.length === 0 ? (
+        <div className="card empty">
+          <p className="empty-title">No active moves yet</p>
+          <p className="empty-hint">Open a project and add a move to see it listed here.</p>
+        </div>
+      ) : (
+        <div className="card allmoves-card">
+          {ordered.map((move, i) => {
+            const overdue = isOverdue(move.deadline, today)
+            return (
+              <button
+                key={move.id}
+                type="button"
+                className="nextup-row"
+                onClick={() => onOpenProject(move.projectId)}
+              >
+                <span className="queue-rank">{i + 1}</span>
+                <span className="nextup-name">{projectName(move.projectId)}</span>
+                <span className="nextup-title-text">{move.title}</span>
+                <DifficultyTag value={move.difficulty} />
+                {overdue ? (
+                  <span className="pill pill-warn">Overdue</span>
+                ) : (
+                  <span className="pill pill-accent">
+                    {dueLabel(today, move.deadline, move.deadlineTime)}
+                  </span>
+                )}
+              </button>
+            )
+          })}
+        </div>
+      )}
+
+      <p className="foot-meta">Reorder anytime: Easiest first / Hardest first / Nearest deadline</p>
+    </main>
+  )
 }
 
-function dueLabel(today: string, deadline: string) {
+function dueLabel(today: string, deadline: string, time?: string | null) {
   const days = daysUntil(deadline, today)
-  if (days === 0) return 'Due today'
-  if (days === 1) return 'Due tomorrow'
-  return `In ${days} days`
+  const at = time ? ` at ${time}` : ''
+  if (days === 0) return `Due today${at}`
+  if (days === 1) return `Due tomorrow${at}`
+  return `In ${days} days${at}`
 }
 
 function RolloverPrompt({
@@ -541,7 +897,9 @@ function ProjectView({
                     rank={i + 1}
                     today={today}
                     selected={selectedId === move.id}
-                    onSelect={() => setSelectedId(move.id)}
+                    onSelect={() =>
+                      setSelectedId((cur) => (cur === move.id ? null : move.id))
+                    }
                     apply={apply}
                   />
                 ))}
@@ -551,6 +909,7 @@ function ProjectView({
                 move={selected ?? null}
                 today={today}
                 apply={apply}
+                onClose={() => setSelectedId(null)}
                 onChanged={(id) => {
                   const m = moves.find((x) => x.id === id)
                   if (m?.completed) setSelectedId(null)
@@ -613,12 +972,14 @@ function FocusPanel({
   move,
   today,
   apply,
+  onClose,
   onChanged,
   onDeleted,
 }: {
   move: Move | null
   today: string
   apply: (mutate: (s: AppState) => AppState) => void
+  onClose: () => void
   onChanged: (id: string) => void
   onDeleted: () => void
 }) {
@@ -637,7 +998,17 @@ function FocusPanel({
 
   return (
     <aside className="focus-panel">
-      <div className="focus-panel-tag">Focus</div>
+      <div className="focus-panel-head">
+        <span className="focus-panel-tag">Focus</span>
+        <button
+          type="button"
+          className="focus-close"
+          onClick={onClose}
+          aria-label="Close focus panel"
+        >
+          ×
+        </button>
+      </div>
       <input
         type="text"
         className="focus-title-input"
@@ -690,6 +1061,23 @@ function FocusPanel({
           value={move.deadline}
           onChange={(e) => apply((s) => updateMove(s, move.id, { deadline: e.target.value }))}
           aria-label="Move deadline"
+        />
+      </div>
+
+      <div className="panel-field">
+        <label className="field-label" htmlFor="focus-deadline-time">
+          Time
+        </label>
+        <input
+          id="focus-deadline-time"
+          type="time"
+          className="input"
+          style={{ width: '100%' }}
+          value={move.deadlineTime ?? ''}
+          onChange={(e) =>
+            apply((s) => updateMove(s, move.id, { deadlineTime: e.target.value || null }))
+          }
+          aria-label="Move time"
         />
       </div>
 
@@ -818,6 +1206,7 @@ function MoveForm({
   const [difficulty, setDifficulty] = useState(initial?.difficulty ?? 3)
   const [progress, setProgress] = useState(initial?.progress ?? 0)
   const [deadline, setDeadline] = useState(initial?.deadline ?? '')
+  const [deadlineTime, setDeadlineTime] = useState(initial?.deadlineTime ?? '')
 
   const valid = title.trim() !== '' && deadline !== ''
 
@@ -827,10 +1216,16 @@ function MoveForm({
       onSubmit={(e) => {
         e.preventDefault()
         if (!valid) return
-        onAdd({ title: title.trim(), difficulty, progress, deadline })
+        onAdd({
+          title: title.trim(),
+          difficulty,
+          progress,
+          deadline,
+          deadlineTime: deadlineTime || null,
+        })
       }}
     >
-      <div className="form-row">
+      <div>
         <div>
           <label className="field-label" htmlFor="move-title">
             Title
@@ -846,6 +1241,9 @@ function MoveForm({
             aria-label="Move title"
           />
         </div>
+      </div>
+
+      <div className="form-row">
         <div>
           <label className="field-label" htmlFor="move-deadline">
             Deadline
@@ -858,6 +1256,20 @@ function MoveForm({
             value={deadline}
             onChange={(e) => setDeadline(e.target.value)}
             aria-label="Move deadline"
+          />
+        </div>
+        <div>
+          <label className="field-label" htmlFor="move-time">
+            Time (optional)
+          </label>
+          <input
+            id="move-time"
+            type="time"
+            className="input"
+            style={{ width: '100%' }}
+            value={deadlineTime}
+            onChange={(e) => setDeadlineTime(e.target.value)}
+            aria-label="Move time"
           />
         </div>
       </div>

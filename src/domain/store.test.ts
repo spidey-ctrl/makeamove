@@ -77,6 +77,68 @@ describe('move mutations', () => {
     })
   })
 
+  it('createMove stores an optional deadlineTime', () => {
+    const state = stateWithProject()
+    const projectId = state.projects[0].id
+    const next = createMove(state, projectId, {
+      title: 'Gym at 6',
+      deadline: '2026-08-30',
+      deadlineTime: '18:00',
+    })
+    expect(next.moves[0].deadlineTime).toBe('18:00')
+    expect(next.moves[0]).toMatchObject({
+      title: 'Gym at 6',
+      deadline: '2026-08-30',
+      deadlineTime: '18:00',
+    })
+  })
+
+  it('createMove defaults deadlineTime to null when omitted', () => {
+    const state = stateWithProject()
+    const next = createMove(state, state.projects[0].id, {
+      title: 'No time',
+      deadline: '2026-08-30',
+    })
+    expect(next.moves[0].deadlineTime).toBeNull()
+  })
+
+  it('updateMove sets and clears deadlineTime', () => {
+    const state = stateWithProject()
+    const projectId = state.projects[0].id
+    const withMove = createMove(state, projectId, {
+      title: 'Finish essay',
+      deadline: '2026-08-30',
+    })
+    const moveId = withMove.moves[0].id
+    const withTime = updateMove(withMove, moveId, { deadlineTime: '15:30' })
+    expect(withTime.moves[0].deadlineTime).toBe('15:30')
+    const cleared = updateMove(withMove, moveId, { deadlineTime: null })
+    expect(cleared.moves[0].deadlineTime).toBeNull()
+  })
+
+  it('createMove honors difficulty and progress from the form', () => {
+    const state = stateWithProject()
+    const projectId = state.projects[0].id
+    const next = createMove(state, projectId, {
+      title: 'Hard push',
+      deadline: '2026-08-30',
+      difficulty: 5,
+      progress: 40,
+    })
+    expect(next.moves[0]).toMatchObject({ difficulty: 5, progress: 40, completed: false })
+  })
+
+  it('createMove auto-completes a move created at 100% progress', () => {
+    const state = stateWithProject()
+    const next = createMove(state, state.projects[0].id, {
+      title: 'Already done',
+      deadline: '2026-08-30',
+      progress: 100,
+    })
+    expect(next.moves[0]).toMatchObject({ progress: 100, completed: true })
+    expect(next.moves[0].completedAt).toBeTruthy()
+  })
+
   it('updateMove leaves unrelated moves untouched', () => {
     const state = stateWithProject()
     const projectId = state.projects[0].id
