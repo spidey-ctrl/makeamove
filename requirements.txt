@@ -3,6 +3,7 @@ mangum
 psycopg[binary]
 bcrypt
 PyJWT
+cryptography
 email-validator
 httpx
 python-dotenv

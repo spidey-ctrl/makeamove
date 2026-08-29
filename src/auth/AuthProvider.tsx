@@ -1,10 +1,20 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
+import { Capacitor } from '@capacitor/core'
+import { GoogleSignIn } from '@capawesome/capacitor-google-sign-in'
 import { api, getToken, setToken, type AuthUser } from '../api/client'
 import { AuthContext, type AuthContextValue } from './authContext'
+
+const GOOGLE_CLIENT_ID: string = (import.meta.env.VITE_GOOGLE_CLIENT_ID as string | undefined) ?? ''
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<AuthUser | null>(null)
   const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    if (Capacitor.isNativePlatform() && GOOGLE_CLIENT_ID) {
+      GoogleSignIn.initialize({ clientId: GOOGLE_CLIENT_ID }).catch(() => undefined)
+    }
+  }, [])
 
   useEffect(() => {
     const token = getToken()
@@ -31,6 +41,18 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setUser({ email: result.user.email, verified: true })
   }, [])
 
+  const googleSignIn = useCallback(async (idToken: string) => {
+    const result = await api.google(idToken)
+    setToken(result.token)
+    setUser({ email: result.user.email, verified: true })
+  }, [])
+
+  const googleExchange = useCallback(async (code: string) => {
+    const result = await api.googleExchange(code)
+    setToken(result.token)
+    setUser({ email: result.user.email, verified: true })
+  }, [])
+
   const logout = useCallback(() => {
     setToken(null)
     setUser(null)
@@ -45,8 +67,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, [])
 
   const value = useMemo<AuthContextValue>(
-    () => ({ user, loading, login, signup, logout, forgotPassword, resetPassword }),
-    [user, loading, login, signup, logout, forgotPassword, resetPassword],
+    () => ({ user, loading, login, signup, googleSignIn, googleExchange, logout, forgotPassword, resetPassword }),
+    [user, loading, login, signup, googleSignIn, googleExchange, logout, forgotPassword, resetPassword],
   )
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>

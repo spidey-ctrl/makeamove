@@ -27,6 +27,8 @@ RESET_TOKEN_TTL_MINUTES = int(os.environ.get("RESET_TOKEN_TTL_MINUTES", "30"))
 BASE_URL = os.environ.get("BASE_URL", "https://makeamove-flame.vercel.app")
 EMAIL_FROM = os.environ.get("EMAIL_FROM", "")
 EMAIL_API_KEY = os.environ.get("EMAIL_API_KEY", "")
+GOOGLE_CLIENT_ID = os.environ.get("GOOGLE_CLIENT_ID", "")
+GOOGLE_CLIENT_SECRET = os.environ.get("GOOGLE_CLIENT_SECRET", "")
 
 
 def get_conn():
@@ -97,6 +99,63 @@ def create_token(user_id: str, email: str) -> str:
         "exp": now_utc() + timedelta(days=TOKEN_TTL_DAYS),
     }
     return jwt.encode(payload, JWT_SECRET, algorithm="HS256")
+
+
+_google_keys: dict[str, Any] = {}
+_google_keys_fetched_at: Optional[datetime] = None
+
+
+def google_signing_keys() -> dict[str, Any]:
+    global _google_keys, _google_keys_fetched_at
+    if _google_keys and _google_keys_fetched_at and now_utc() - _google_keys_fetched_at < timedelta(hours=1):
+        return _google_keys
+    try:
+        import httpx
+
+        resp = httpx.get("https://www.googleapis.com/oauth2/v3/certs", timeout=10)
+        resp.raise_for_status()
+        keys = {}
+        for jwk in resp.json().get("keys", []):
+            if jwk.get("kid"):
+                keys[jwk["kid"]] = jwt.algorithms.RSAAlgorithm.from_jwk(jwk)
+        _google_keys = keys
+        _google_keys_fetched_at = now_utc()
+        print(f"[makeamove] loaded {len(keys)} google signing keys")
+    except Exception as exc:  # pragma: no cover
+        print(f"[makeamove] failed to fetch google certs: {exc}")
+    return _google_keys
+
+
+def verify_google_id_token(id_token: str) -> dict[str, Any]:
+    if not GOOGLE_CLIENT_ID:
+        raise HTTPException(status_code=503, detail="Google sign-in is not configured yet")
+    try:
+        header = jwt.get_unverified_header(id_token)
+        keys = google_signing_keys()
+        signing_key = keys.get(header.get("kid"))
+        if signing_key is None:
+            print(f"[makeamove] no key for kid {header.get('kid')!r}; have {list(keys)[:3]}")
+            raise HTTPException(status_code=401, detail="Invalid Google sign-in (unknown key)")
+        claims = jwt.decode(
+            id_token,
+            signing_key,
+            algorithms=["RS256"],
+            audience=GOOGLE_CLIENT_ID,
+            issuer=["accounts.google.com", "https://accounts.google.com"],
+        )
+    except jwt.PyJWTError as exc:
+        print(f"[makeamove] google token rejected: {type(exc).__name__}: {exc}")
+        raise HTTPException(status_code=401, detail="Invalid Google sign-in")
+    email = str(claims.get("email") or "").lower()
+    if not email:
+        raise HTTPException(status_code=401, detail="Google account has no email address")
+    if claims.get("email_verified") is False:
+        raise HTTPException(status_code=401, detail="Google email is not verified")
+    return {"email": email, "sub": str(claims.get("sub") or "")}
+
+
+class GoogleBody(BaseModel):
+    id_token: str
 
 
 def require_user(authorization: str = Header(default="")) -> dict[str, Any]:
@@ -223,6 +282,90 @@ def signup(body: SignupBody) -> dict:
         "Welcome to MakeAMove",
         f"<p>Your MakeAMove account is ready. From now on your projects and moves sync to the cloud.</p>",
     )
+    return {"token": create_token(user_id, email), "user": {"email": email}}
+
+
+def user_id_for_google_email(email: str) -> str:
+    existing = fetch_user_by_email(email)
+    if existing:
+        with get_conn() as conn, conn.cursor() as cur:
+            cur.execute(
+                "UPDATE users SET failed_attempts = 0, locked_until = NULL WHERE id = %s",
+                (existing["id"],),
+            )
+            conn.commit()
+        return existing["id"]
+    user_id = secrets.token_urlsafe(16)
+    placeholder = hash_password(secrets.token_urlsafe(24))
+    conn = None
+    try:
+        conn = get_conn()
+        with conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO users (id, email, password_hash, verified) VALUES (%s, %s, %s, TRUE)",
+                (user_id, email, placeholder),
+            )
+        conn.commit()
+    except psycopg.errors.UniqueViolation:
+        if conn is not None:
+            conn.rollback()
+        row = fetch_user_by_email(email)
+        if not row:
+            raise HTTPException(status_code=500, detail="Could not create account")
+        user_id = row["id"]
+    finally:
+        if conn is not None:
+            conn.close()
+    return user_id
+
+
+class GoogleExchangeBody(BaseModel):
+    code: str
+
+
+def exchange_google_code(code: str) -> str:
+    import httpx
+
+    resp = httpx.post(
+        "https://oauth2.googleapis.com/token",
+        data={
+            "code": code,
+            "client_id": GOOGLE_CLIENT_ID,
+            "client_secret": GOOGLE_CLIENT_SECRET,
+            "redirect_uri": BASE_URL,
+            "grant_type": "authorization_code",
+        },
+        timeout=15,
+    )
+    if resp.status_code != 200:
+        print(f"[makeamove] google token exchange failed: {resp.status_code} {resp.text[:300]}")
+        raise HTTPException(status_code=401, detail="Google sign-in failed (authorization code rejected)")
+    id_token = resp.json().get("id_token")
+    if not id_token:
+        raise HTTPException(status_code=401, detail="Google sign-in failed (no id token)")
+    return id_token
+
+
+@app.post("/api/auth/google")
+def google_auth(body: GoogleBody) -> dict:
+    if not DATABASE_URL or not JWT_SECRET:
+        raise HTTPException(status_code=503, detail="Server is not configured yet")
+    info = verify_google_id_token(body.id_token)
+    email = info["email"]
+    user_id = user_id_for_google_email(email)
+    return {"token": create_token(user_id, email), "user": {"email": email}}
+
+
+@app.post("/api/auth/google/exchange")
+def google_exchange(body: GoogleExchangeBody) -> dict:
+    if not DATABASE_URL or not JWT_SECRET:
+        raise HTTPException(status_code=503, detail="Server is not configured yet")
+    if not GOOGLE_CLIENT_SECRET:
+        raise HTTPException(status_code=503, detail="Google sign-in is not configured yet")
+    id_token = exchange_google_code(body.code)
+    info = verify_google_id_token(id_token)
+    email = info["email"]
+    user_id = user_id_for_google_email(email)
     return {"token": create_token(user_id, email), "user": {"email": email}}
 
 

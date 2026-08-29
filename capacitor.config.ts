@@ -7,6 +7,7 @@ const config: CapacitorConfig = {
   server: {
     url: 'https://makeamove-flame.vercel.app',
     cleartext: false,
+    allowNavigation: ['accounts.google.com'],
   },
 };
 

@@ -6,6 +6,8 @@ export type AuthContextValue = {
   loading: boolean
   login: (email: string, password: string) => Promise<void>
   signup: (email: string, password: string) => Promise<void>
+  googleSignIn: (idToken: string) => Promise<void>
+  googleExchange: (code: string) => Promise<void>
   logout: () => void
   forgotPassword: (email: string) => Promise<void>
   resetPassword: (token: string, password: string) => Promise<void>
@@ -16,6 +18,8 @@ export const AuthContext = createContext<AuthContextValue>({
   loading: true,
   login: async () => undefined,
   signup: async () => undefined,
+  googleSignIn: async () => undefined,
+  googleExchange: async () => undefined,
   logout: () => undefined,
   forgotPassword: async () => undefined,
   resetPassword: async () => undefined,

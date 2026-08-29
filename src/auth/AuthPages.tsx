@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useAuth } from './authContext'
 import { ApiError } from '../api/client'
+import { GoogleButton } from './GoogleButton'
 
 type Mode = 'login' | 'signup' | 'forgot' | 'reset' | 'message'
 
@@ -33,6 +34,29 @@ export function AuthPages() {
       setMode('reset')
     }
   }, [mode])
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search)
+    const code = params.get('code')
+    if (!code) return
+    try {
+      window.localStorage.removeItem('makeamove_gstate')
+      window.sessionStorage.removeItem('makeamove_gstate')
+    } catch {
+      /* ignore storage errors */
+    }
+    setBusy(true)
+    auth
+      .googleExchange(code)
+      .catch((err) => {
+        const message = err instanceof ApiError ? err.message : 'Something went wrong. Try again.'
+        setError(message)
+      })
+      .finally(() => {
+        setBusy(false)
+        window.history.replaceState(null, '', window.location.pathname)
+      })
+  }, [auth])
 
   async function handleSubmit(event: React.FormEvent) {
     event.preventDefault()
@@ -88,13 +112,22 @@ export function AuthPages() {
             )}
           </div>
         ) : (
-          <form className="auth-card" onSubmit={handleSubmit}>
-            <h1 className="auth-title">
-              {mode === 'login' && 'Welcome back.'}
-              {mode === 'signup' && 'Create your account.'}
-              {mode === 'forgot' && 'Reset your password.'}
-              {mode === 'reset' && 'Choose a new password.'}
-            </h1>
+          <div className="auth-card">
+            {(mode === 'login' || mode === 'signup') && (
+              <div className="auth-google-wrap">
+                <GoogleButton />
+                <div className="auth-divider">
+                  <span>or</span>
+                </div>
+              </div>
+            )}
+            <form className="auth-form" onSubmit={handleSubmit}>
+              <h1 className="auth-title">
+                {mode === 'login' && 'Welcome back.'}
+                {mode === 'signup' && 'Create your account.'}
+                {mode === 'forgot' && 'Reset your password.'}
+                {mode === 'reset' && 'Choose a new password.'}
+              </h1>
 
             {mode !== 'reset' && (
               <label className="auth-field">
@@ -177,7 +210,8 @@ export function AuthPages() {
                 </button>
               )}
             </div>
-          </form>
+            </form>
+          </div>
         )}
       </div>
     </main>

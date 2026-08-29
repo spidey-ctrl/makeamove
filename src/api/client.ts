@@ -69,6 +69,20 @@ export const api = {
     })
   },
 
+  google(idToken: string): Promise<{ token: string; user: { email: string } }> {
+    return request('api/auth/google', {
+      method: 'POST',
+      body: JSON.stringify({ id_token: idToken }),
+    })
+  },
+
+  googleExchange(code: string): Promise<{ token: string; user: { email: string } }> {
+    return request('api/auth/google/exchange', {
+      method: 'POST',
+      body: JSON.stringify({ code }),
+    })
+  },
+
   me(): Promise<AuthUser> {
     return request('api/auth/me')
   },
